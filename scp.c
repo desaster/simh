@@ -245,6 +245,11 @@
 #include <dlfcn.h>
 #endif
 
+#ifdef USE_REALCONS
+#include "realcons.h" /* REAL-CONSOLE */
+#include <pthread.h>
+#endif
+
 #ifndef MAX
 #define MAX(a,b)  (((a) >= (b)) ? (a) : (b))
 #endif
@@ -474,13 +479,18 @@ typedef enum {
     SW_NUMBER           /* Numeric Value */
     } SWITCH_PARSE;
 SWITCH_PARSE get_switches (const char *cptr, int32 *sw_val, int32 *sw_number);
+t_stat get_aval (t_addr addr, DEVICE *dptr, UNIT *uptr);
+t_value get_rval (REG *rptr, uint32 idx);
 void put_rval (REG *rptr, uint32 idx, t_value val);
 void fprint_help (FILE *st);
 void fprint_stopped (FILE *st, t_stat r);
 void fprint_capac (FILE *st, DEVICE *dptr, UNIT *uptr);
 void fprint_sep (FILE *st, int32 *tokens);
+char *read_line (char *ptr, int32 size, FILE *stream);
+char *read_line_p (const char *prompt, char *ptr, int32 size, FILE *stream);
 REG *find_reg_glob (CONST char *ptr, CONST char **optr, DEVICE **gdptr);
 REG *find_reg_glob_reason (CONST char *cptr, CONST char **optr, DEVICE **gdptr, t_stat *stat);
+char *sim_trim_endspc (char *cptr);
 
 /* Forward references */
 
@@ -2102,6 +2112,9 @@ static CTAB cmd_table[] = {
 
 static CTAB set_glob_tab[] = {
     { "CONSOLE",    &sim_set_console,           0, HLP_SET_CONSOLE },
+#ifdef USE_REALCONS
+    { "REALCONS",   &sim_set_realcons,          0, NULL },
+#endif
     { "REMOTE",     &sim_set_remote_console,    0, HLP_SET_REMOTE },
     { "BREAK",      &brk_cmd,              SSH_ST, HLP_SET_BREAK },
     { "NOBREAK",    &brk_cmd,              SSH_CL, HLP_SET_BREAK },
@@ -2162,6 +2175,9 @@ static SHTAB show_glob_tab[] = {
     { "VERSION",        &show_version,              1, HLP_SHOW_VERSION },
     { "DEFAULT",        &show_default,              0, HLP_SHOW_DEFAULT },
     { "CONSOLE",        &sim_show_console,          0, HLP_SHOW_CONSOLE },
+#ifdef USE_REALCONS
+    { "REALCONS",       &sim_show_realcons,         0 },
+#endif
     { "REMOTE",         &sim_show_remote_console,   0, HLP_SHOW_REMOTE },
     { "BREAK",          &show_break,                0, HLP_SHOW_BREAK },
     { "LOG",            &sim_show_log,              0, HLP_SHOW_LOG },
@@ -2196,6 +2212,30 @@ static SHTAB show_unit_tab[] = {
     { NULL, NULL, 0 }
     };
 
+#ifdef USE_REALCONS
+    // Additional CPU state for exam, deposit, start stop etc.
+    t_addr realcons_memory_address_phys_register; // physical memory address
+    t_addr realcons_memory_address_virt_register; // virtual memory address
+    t_value realcons_memory_data_register; // memory data
+    int realcons_memory_write_access ; // 1 = last access to realcons_memory_* was WRITE
+    t_stat realcons_memory_status; // OK, NXM?
+
+    const char *realcons_register_name; // pseudo: name of last accessed register
+    int realcons_console_halt; // 1: CPU halted by realcons console
+
+    // Pointers to event handlers for simulated CPU
+    // Events are called in SimH-code as pointers to functions in panel logic
+    // call like "REALCONS_EVENT(cpu_realcons, realcons_event_connect)" ;
+    console_controller_event_func_t realcons_event_run_start ; // before cpu starts execution
+    console_controller_event_func_t realcons_event_operator_halt ; // after cpu is stopped by operator
+    console_controller_event_func_t realcons_event_step_start ; // before cpu performs a single step
+    console_controller_event_func_t realcons_event_step_halt ; // after cpu performeds a single step
+    console_controller_event_func_t realcons_event_operator_exam ; // after manual "EXAM addr" cycle
+    console_controller_event_func_t realcons_event_operator_deposit ; // after manual "DEPOSIT addr" cycle
+    console_controller_event_func_t realcons_event_operator_reg_exam ; // after manual "EXAM register" cycle
+    console_controller_event_func_t realcons_event_operator_reg_deposit ; // after manual "DEPOSIT register" cycle
+    console_controller_event_func_t realcons_event_cpu_reset ; // after manual "RESET" cycle
+#endif
 
 #if defined(_WIN32) || defined(__hpux)
 static
@@ -2245,6 +2285,18 @@ for (i=0; i<argc; i++)
     targv[i] = argv[i];
 argv = targv;
 set_prompt (0, "sim>");                                 /* start with set standard prompt */
+
+#ifdef USE_REALCONS
+cpu_realcons = realcons_constructor() ;
+// init scp cpu state
+realcons_memory_address_phys_register = 0 ;
+realcons_memory_address_virt_register = 0 ;
+realcons_memory_data_register = 0 ;
+realcons_memory_write_access = 0 ;
+realcons_memory_status = SCPE_OK;
+realcons_console_halt = 0 ;
+#endif
+
 *cbuf = 0;                                              /* init arg buffer */
 sim_switches = 0;                                       /* init switches */
 lookswitch = TRUE;
@@ -2378,6 +2430,9 @@ else if (*argv[0]) {                                    /* sim name arg? */
 stat = process_stdin_commands (SCPE_BARE_STATUS(stat), argv);
 
 detach_all (0, TRUE);                                   /* close files */
+#ifdef USE_REALCONS
+    realcons_disconnect(cpu_realcons);
+#endif
 sim_set_deboff (0, NULL);                               /* close debug */
 sim_set_logoff (0, NULL);                               /* close log */
 sim_set_notelnet (0, NULL);                             /* close Telnet */
@@ -5050,6 +5105,9 @@ if (vdelt)
 #if defined (SIM_VERSION_MODE)
 fprintf (st, " %s", SIM_VERSION_MODE);
 #endif
+#ifdef USE_REALCONS
+fprintf (st, " %s", " REALCONS build " __DATE__) ;
+#endif
 if (flag) {
     t_bool idle_capable;
     uint32 os_ms_sleep_1, os_tick_size;
@@ -7146,6 +7204,16 @@ if ((flag == RU_RUN) || (flag == RU_GO)) {              /* run or go */
                 return sim_messagef (r, "Unable to establish breakpoint at: %s\n", cptr);
             }
         sim_switches = saved_switches;
+#ifdef USE_REALCONS
+        // if (cpu_realcons->connected && !realcons_machine_set_state(cpu_realcons,REALCONS_MS_GENERIC_CPU_RUN_START)) {
+        if (cpu_realcons->connected) {
+            if (realcons_console_halt) {
+                fprintf (stderr, "Can not start: real console HALT or OFF.\n") ;
+                return SCPE_STOP ;
+            }
+            REALCONS_EVENT(cpu_realcons, realcons_event_run_start) ;
+        }
+#endif
         }
     }
 
@@ -7167,6 +7235,10 @@ else if ((flag == RU_STEP) ||
             return SCPE_ARG;
         }
     else sim_step = 1;
+#ifdef USE_REALCONS
+    REALCONS_EVENT(cpu_realcons, realcons_event_step_start) ;
+    // no check for single step: real console may or may not be in HALT mode
+#endif
     if ((flag == RU_STEP) && (sim_switches & SWMASK ('T')))
         sim_step = (int32)((sim_timer_inst_per_sec ()*sim_step)/1000000.0);
     }
@@ -7214,6 +7286,16 @@ else if (flag == RU_BOOT) {                             /* boot */
         return r;
     if ((r = dptr->boot (unitno, dptr)) != SCPE_OK)     /* boot device */
         return r;
+#ifdef USE_REALCONS
+    // if (cpu_realcons->connected &&  !realcons_machine_set_state(cpu_realcons,REALCONS_MS_GENERIC_CPU_RUN_START)) {
+    if (cpu_realcons->connected) {
+        if (realcons_console_halt) {
+            fprintf (stderr, "Can not boot: real console HALT or OFF.\n") ;
+            return SCPE_STOP ;
+        }
+        REALCONS_EVENT(cpu_realcons, realcons_event_run_start) ;
+    }
+#endif
     }
 
 else 
@@ -7222,6 +7304,16 @@ else
     else                                                /* CONTINUE command */
         if (*cptr != 0)                                 /* should be end (no arguments allowed) */
             return sim_messagef (SCPE_2MARG, "CONTINUE command takes no arguments\n");
+#ifdef USE_REALCONS
+    if (flag == RU_CONT && cpu_realcons->connected) {
+        // if (cpu_realcons->connected && !realcons_machine_set_state(cpu_realcons,REALCONS_MS_GENERIC_CPU_RUN_START)) {
+        if (realcons_console_halt) {
+            fprintf (stderr, "Can not continue: real console HALT or OFF.\n");
+            return SCPE_STOP;
+        }
+        REALCONS_EVENT(cpu_realcons, realcons_event_run_start) ;
+    }
+#endif
 
 if (sim_switches & SIM_SW_HIDE)                         /* Setup only for Remote Console Mode */
     return SCPE_OK;
@@ -7748,6 +7840,13 @@ else if (!(rptr->flags & REG_VMFLAGS) ||
     (fprint_sym (ofile, (rptr->flags & REG_UFMASK) | rdx, sim_eval,
                  NULL, sim_switches | SIM_SW_REG) > 0)) {
         fprint_val (ofile, val, rdx, rptr->width, rptr->flags & REG_FMT);
+#ifdef USE_REALCONS
+    { // 2nd id system: register not known by CPU addresses
+        realcons_register_name = rptr->name; //
+        realcons_memory_data_register = val;
+        REALCONS_EVENT(cpu_realcons, realcons_event_operator_reg_exam);
+    }
+#endif
         if (rptr->fields) {
             fprintf (ofile, "\t");
             fprint_fields (ofile, val, val, rptr->fields);
@@ -7867,6 +7966,13 @@ else
 if ((rptr->flags & REG_NZ) && (val == 0))
     return SCPE_ARG;
 put_rval (rptr, idx, val);
+#ifdef USE_REALCONS
+    { // 2nd id system: register not known by CPU addresses
+        realcons_register_name = rptr->name; //
+        realcons_memory_data_register = val;
+        REALCONS_EVENT(cpu_realcons, realcons_event_operator_reg_deposit);
+    }
+#endif
 return SCPE_OK;
 }
 
@@ -7944,6 +8050,10 @@ else PUT_RVAL (t_uint64, rptr, idx, val, mask);
 #else
 else PUT_RVAL (uint32, rptr, idx, val, mask);
 #endif
+
+#ifdef USE_REALCONS
+    realcons_simh_event_deposit(cpu_realcons, rptr) ; // notify
+#endif
 }
 
 /* Examine address routine
@@ -7975,6 +8085,15 @@ GET_RADIX (rdx, dptr->dradix);
 if ((reason = fprint_sym (ofile, addr, sim_eval, uptr, sim_switches)) > 0) {
     fprint_val (ofile, sim_eval[0], rdx, dptr->dwidth, PV_RZRO);
     reason = 1 - dptr->aincr;
+#ifdef USE_REALCONS
+    {
+        realcons_memory_address_phys_register = addr;
+        realcons_memory_data_register = sim_eval[0];
+        realcons_memory_write_access = 0;
+        realcons_memory_status = reason;
+        REALCONS_EVENT(cpu_realcons, realcons_event_operator_exam);
+    }
+#endif
     }
 if (flag & EX_I)
     fprintf (ofile, "\t");
@@ -8048,6 +8167,11 @@ for (i = 0, j = addr; i < sim_emax; i++, j = j + dptr->aincr) {
         }
     sim_last_val = sim_eval[i] = sim_eval[i] & mask;
     }
+#ifdef USE_REALCONS
+    realcons_memory_status = SCPE_OK;
+    if ((reason != SCPE_OK) && (i == 0))
+        realcons_memory_status = reason;
+#endif
 if ((reason != SCPE_OK) && (i == 0))
     return reason;
 return SCPE_OK;
@@ -8105,6 +8229,15 @@ for (i = 0, j = addr; i < count; i++, j = j + dptr->aincr) {
     sim_eval[i] = sim_eval[i] & mask;
     if (dptr->deposit != NULL) {
         r = dptr->deposit (sim_eval[i], j, uptr, sim_switches);
+#ifdef USE_REALCONS
+    // called for all addresses, all devices .. should be CPU only!
+    realcons_memory_address_phys_register = j;
+
+    realcons_memory_data_register = sim_eval[i];
+    realcons_memory_write_access = 1;
+    realcons_memory_status = r;
+    REALCONS_EVENT(cpu_realcons, realcons_event_operator_deposit);
+#endif
         if (r != SCPE_OK)
             return r;
         }
@@ -8205,7 +8338,13 @@ return read_line_p (NULL, cptr, size, stream);
                         NULL if EOF
 */
 
+#ifdef USE_REALCONS
+// internal name
+char *read_line_p_body(const char *prompt, char *cptr, int32 size, FILE *stream)
+#else
+
 char *read_line_p (const char *prompt, char *cptr, int32 size, FILE *stream)
++#endif
 {
 char *tptr;
 #if defined(HAVE_DLOPEN)
@@ -8285,6 +8424,135 @@ if (prompt && p_add_history && *cptr)                   /* Save non blank lines 
 
 return cptr;
 }
+
+#ifdef USE_REALCONS
+/*
+If using a console, user input comes concurrently from two sources:
+- read_line_p(): HAVE_DLOPEN? readline() : fgets()
+- and from polled simh_cmd_buffer[],
+So
+- run read_line_p() in background thread
+- poll console in foreground loop
+if input from console: abort readline-thread
+
+Stop the background readline() by sending/"injecting" an ENTER \"n"
+OR   inject the command string directly into the tty and use
+fgets() result.
+Under WIN:
+send Enter Key-down, Key-Up to console with WriteConsoleInput()
+see  http://stackoverflow.com/questions/28119770/kill-fgets-thread-in-mingw-and-wine
+
+Under Linux: Inject char to /dev/tty with ioctl(stdin,  TIOCSTI, <string>)
+see http://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+"faking input"
+
+ Btw: Do not use pthread_cancel() on getline() thread, this leaves stdin in undefined state!
+
+*/
+
+// params to threaded read_line_p
+typedef struct {
+    const char *prompt;
+    char *cptr;
+    int32 size;
+    FILE *stream;
+    int busy; // to test if it is still running
+    char *result; // pointer to result string
+} read_line_thread_data_t;
+
+// feed a character into stdin, as if it where typed in
+static void inject_char_to_stdin(char ch) {
+#ifdef  WIN32
+    INPUT_RECORD ir[2];
+    DWORD dw;
+    int vkey = VkKeyScan(ch);
+
+    for (int i = 0; i<2; i++) {
+        KEY_EVENT_RECORD *kev = &ir[i].Event.KeyEvent;
+        ir[i].EventType = KEY_EVENT;
+        kev->bKeyDown = (i == 0);    // first true, then false
+        kev->dwControlKeyState = 0;
+        kev->wRepeatCount = 1;
+        if (ch < 32) // trial&error JH
+            kev->uChar.UnicodeChar = vkey; // the '\n' !
+        else kev->uChar.UnicodeChar = ch;
+        //kev->uChar.AsciiChar = ch;
+        kev->wVirtualKeyCode = vkey;
+        kev->wVirtualScanCode = MapVirtualKey(vkey, MAPVK_VK_TO_VSC);
+    }
+    WriteConsoleInput(GetStdHandle(STD_INPUT_HANDLE), ir, 2, &dw);
+#else // Linux?
+    //int fd = fopen("/dev/tty", "rw") ;
+    //ioctl(fd,  TIOCSTI, &ch) ;
+    if (ioctl(0,  TIOCSTI, &ch) < 0)  // does not echo
+        fprintf(stderr, "ioctl(TIOCSTI) failed: %s\r\n", strerror(errno));
+#endif
+}
+
+// main func of thread: unpacks args and calls original
+// calls the original read_line_p_body()
+// returns after complete line was entered and terminated with ENTER by user.
+static void *read_line_thread_start(void *args)
+{
+	read_line_thread_data_t	*read_line_thread_data = args;
+	read_line_thread_data->result = read_line_p_body(
+			read_line_thread_data->prompt,
+			read_line_thread_data->cptr,
+			read_line_thread_data->size,
+			read_line_thread_data->stream);
+	read_line_thread_data->busy = FALSE; // signal "ready"
+	return read_line_thread_data->result ; // 2nd way to get result string
+}
+
+
+// read_line_p(): original function, interface to existing code.
+char *read_line_p(const char *prompt, char *cptr, int32 size, FILE *stream)
+{
+	if (!cpu_realcons->connected) {
+        // no realcons - direct input, as in unpatched SimH
+		return read_line_p_body(prompt, cptr, size, stream) ;
+	} else {
+        // "sim>" command line in parallel thread
+		pthread_t	thread;
+		int	err;
+		// pack params into one struct
+		read_line_thread_data_t	read_line_thread_data;
+		read_line_thread_data.prompt = prompt;
+		read_line_thread_data.cptr = cptr;
+		read_line_thread_data.size = size;
+		read_line_thread_data.stream = stream;
+		read_line_thread_data.busy = TRUE;
+
+		// test: call in main thread
+		// read_line_thread_start(&read_line_p_args);
+		err = pthread_create(&thread, NULL, read_line_thread_start, &read_line_thread_data);
+		if (err)
+			fprintf(stderr, "pthread_create() failed with %d\n", err);
+
+		// parallel main loop, until getline() ready, or input from panel
+		while (read_line_thread_data.busy) {
+			char *s;
+			sim_os_ms_sleep(1);// don't heat cpu
+			realcons_service(cpu_realcons, 0); // query panel state
+			s = realcons_simh_get_cmd(cpu_realcons); // query and clear
+			if (s && *s) {
+				// new cmd string from panel: feed into console or dev/tty == stdin
+				int32 n = strlen(s); // trunc to cptr size
+				if (n > size)
+					n = size;
+				s[n] = '\0';
+				// inject cmd string to stdin. cmd is already terminated with \n
+				while (*s)
+					inject_char_to_stdin(*s++);
+				// now readline() received an ENTER key, thread should now terminate: read_line_thread_data.busy = 0
+			}
+		}
+		// http://stackoverflow.com/questions/8634736/pthread-create-and-eagain
+		pthread_join(thread, NULL) ;
+		return read_line_thread_data.result;
+	}
+}
+#endif // USE_REALCONS
 
 /* get_glyph            get next glyph (force upper case)
    get_glyph_nc         get next glyph (no conversion)

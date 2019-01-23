@@ -45,6 +45,14 @@
    in the various operating systems.
 */
 
+#if defined(USE_REALCONS)
+#include "realcons.h" /* REAL-CONSOLE */
+// !!! must be included before pd11_defs.h, because  duplicate symbol INT_PTR
+// #1: realcons.h  -> .... -> rpc_blinkenlight_api.h -> rpc.h -> windows.h --> basetsd.h
+// #2: pdp11_defs.h
+#endif
+
+
 #include "pdp11_defs.h"
 #include "pdp11_cpumod.h"
 #include <time.h>
@@ -1093,6 +1101,11 @@ if (val == (int32) cpu_model)
 cpu_model = val;
 cpu_type = 1u << cpu_model;
 cpu_opt = cpu_tab[cpu_model].std;
+#ifdef USE_REALCONS
+// default: logic object and Blinkenlight panel like SimH cpu type
+strcpy(cpu_realcons->console_logic_name, cpu_tab[cpu_model].name) ;
+strcpy(cpu_realcons->application_panel_name, cpu_realcons->console_logic_name) ;
+#endif
 cpu_set_bus (cpu_opt);
 if (MEMSIZE > cpu_tab[val].maxm)
     cpu_set_size (uptr, cpu_tab[val].maxm, NULL, NULL);
