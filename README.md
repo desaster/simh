@@ -10,6 +10,11 @@ Since this is for my personal use, I've chosen to only merge the PDP11
 changes, since they are useful for use with
 [PiDP-11](http://obsolescence.wixsite.com/obsolescence/pidp-11).
 
+To clone the repository: 
+```
+git clone https://github.com/desaster/simh-realcons-pdp11 -b realcons
+```
+
 The build depends on two source directories included in the BlinkenBone
 repository, and they are defined in the makefile as such:
 
