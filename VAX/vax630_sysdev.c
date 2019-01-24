@@ -905,6 +905,8 @@ t_stat vax630_boot (int32 flag, CONST char *ptr)
 {
 char gbuf[CBUFSIZE];
 
+if ((ptr = get_sim_sw (ptr)) == NULL)               /* get switches */
+    return SCPE_INVSW;
 get_glyph (ptr, gbuf, 0);                           /* get glyph */
 if (gbuf[0] && strcmp (gbuf, "CPU"))
     return SCPE_ARG;                                /* Only can specify CPU device */
@@ -1025,7 +1027,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
     strcpy (sim_name, "VAXStation II (KA630)");
     reset_all (0);                                       /* reset everything */
 #else
-    return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support");
+    return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif
     }
 else

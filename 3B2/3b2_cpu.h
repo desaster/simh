@@ -387,7 +387,7 @@ typedef struct _instr {
 } instr;
 
 /* Function prototypes */
-
+t_stat sys_boot(int32 flag, CONST char *ptr);
 t_stat cpu_svc(UNIT *uptr);
 t_stat cpu_ex(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 t_stat cpu_dep(t_value val, t_addr addr, UNIT *uptr, int32 sw);
@@ -395,6 +395,9 @@ t_stat cpu_reset(DEVICE *dptr);
 t_stat cpu_set_size(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_hist(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat cpu_show_virt(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat cpu_show_stack(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat cpu_show_cio(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat cpu_set_halt(UNIT *uptr, int32 val, char *cptr, void *desc);
 t_stat cpu_clear_halt(UNIT *uptr, int32 val, char *cptr, void *desc);
 t_stat cpu_boot(int32 unit_num, DEVICE *dptr);
@@ -409,59 +412,7 @@ t_stat fprint_sym_m(FILE *of, t_addr addr, t_value *val);
 instr *cpu_next_instruction(void);
 
 uint8 decode_instruction(instr *instr);
-t_bool cpu_on_interrupt(uint8 ipl);
-
-static uint32 cpu_effective_address(operand * op);
-static uint32 cpu_read_op(operand * op);
-static void cpu_write_op(operand * op, t_uint64 val);
-static void cpu_set_nz_flags(t_uint64 data, operand * op);
-
-static SIM_INLINE uint8 cpu_ipl();
-static SIM_INLINE void cpu_on_normal_exception(uint8 isc);
-static SIM_INLINE void cpu_on_stack_exception(uint8 isc);
-static SIM_INLINE void cpu_on_process_exception(uint8 isc);
-static SIM_INLINE void cpu_on_reset_exception(uint8 isc);
-static SIM_INLINE void cpu_perform_gate(uint32 index1, uint32 index2);
-static SIM_INLINE t_bool mem_exception();
-static SIM_INLINE void clear_exceptions();
-static SIM_INLINE void set_psw_tm(t_bool val);
-static SIM_INLINE void clear_instruction(instr *inst);
-static SIM_INLINE int8 op_type(operand *op);
-static SIM_INLINE t_bool op_signed(operand *op);
-static SIM_INLINE t_bool is_byte_immediate(operand * oper);
-static SIM_INLINE t_bool is_halfword_immediate(operand * oper);
-static SIM_INLINE t_bool is_word_immediate(operand * oper);
-static SIM_INLINE t_bool is_positive_literal(operand * oper);
-static SIM_INLINE t_bool is_negative_literal(operand * oper);
-static SIM_INLINE t_bool invalid_destination(operand * oper);
-static SIM_INLINE uint32 sign_extend_n(uint8 val);
-static SIM_INLINE uint32 sign_extend_b(uint8 val);
-static SIM_INLINE uint32 zero_extend_b(uint8 val);
-static SIM_INLINE uint32 sign_extend_h(uint16 val);
-static SIM_INLINE uint32 zero_extend_h(uint16 val);
-static SIM_INLINE t_bool cpu_z_flag();
-static SIM_INLINE t_bool cpu_n_flag();
-static SIM_INLINE t_bool cpu_c_flag();
-static SIM_INLINE t_bool cpu_v_flag();
-static SIM_INLINE void cpu_set_z_flag(t_bool val);
-static SIM_INLINE void cpu_set_n_flag(t_bool val);
-static SIM_INLINE void cpu_set_c_flag(t_bool val);
-static SIM_INLINE void cpu_set_v_flag(t_bool val);
-static SIM_INLINE void cpu_set_v_flag_op(t_uint64 val, operand *op);
-static SIM_INLINE uint8 cpu_execution_level();
-static SIM_INLINE void cpu_set_execution_level(uint8 level);
-static SIM_INLINE void cpu_push_word(uint32 val);
-static SIM_INLINE uint32 cpu_pop_word();
-static SIM_INLINE void irq_push_word(uint32 val);
-static SIM_INLINE uint32 irq_pop_word();
-static SIM_INLINE void cpu_context_switch_1(uint32 pcbp);
-static SIM_INLINE void cpu_context_switch_2(uint32 pcbp);
-static SIM_INLINE void cpu_context_switch_3(uint32 pcbp);
-static SIM_INLINE t_bool op_is_psw(operand *op);
-static SIM_INLINE t_bool op_is_sp(operand *op);
-static SIM_INLINE uint32 cpu_next_pc();
-static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst);
-static SIM_INLINE void sub(t_uint64 a, t_uint64 b, operand *dst);
+void cpu_on_interrupt(uint16 vec);
 
 /* Helper macros */
 

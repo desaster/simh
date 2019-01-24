@@ -158,14 +158,14 @@
    type         #sectors/       #surfaces/      #cylinders/
                  surface         cylinder        drive
 
-   7242         6               20              203		    =24MB
-   7261         11              20              203		    =45MB
-   7271         6               20              406		    =48MB
+   7242         6               20              203         =24MB
+   7261         11              20              203         =45MB
+   7271         6               20              406         =48MB
    3288         17              5               822         =67MB
    7276         11              19              411         =86MB
    7266         11              20              411         =90MB
-   3282         11              19              815		    =170MB
-   3283         17              19              815		    =263MB
+   3282         11              19              815         =170MB
+   3283         17              19              815         =263MB
 
    On the T3281, each drive can be a different type.  The size field
    in each unit selects the drive capacity for each drive and thus
@@ -261,7 +261,7 @@ typedef struct {
     uint32 tpos;                                        /* to position */
     } DP_SNSTAB;
 
-static char *dp_cname[] = {
+static const char *dp_cname[] = {
     "7240", "7270", "7260", "7275", "7265", "T3281"
     };
 
@@ -1113,7 +1113,7 @@ t_stat dp_ioerr (UNIT *uptr)
 uint32 cidx = uptr->UCTX;
 uint32 dva = dp_dib[cidx].dva;
 
-sim_perror ("DP I/O error");
+perror ("DP I/O error");
 clearerr (uptr->fileref);
 dp_ctx[cidx].dp_flags |= DPF_DPE;                       /* set DPE flag */
 chan_set_chf (dva, CHF_XMDE);

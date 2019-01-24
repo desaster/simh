@@ -42,30 +42,19 @@
  *   HD135      11   1224    15   18    512     Maxtor XT1190
  */
 
-#include <assert.h>
 #include "3b2_id.h"
 
-/* Wait times, in CPU steps, for various actions */
+#define ID_SEEK_WAIT        50
+#define ID_SEEK_BASE        700
+#define ID_RECAL_WAIT       6000
+#define ID_RW_WAIT          1000
+#define ID_SUS_WAIT         200
+#define ID_SPEC_WAIT        1250
+#define ID_SIS_WAIT         142
+#define ID_CMD_WAIT         140
 
-/* Each step is 50 us in buffered mode */
-#define ID_SEEK_WAIT        100    /* us */
-#define ID_SEEK_BASE        700    /* us */
-#define ID_RECAL_WAIT       6000   /* us */
-
-/* Reading data takes about 8ms per sector */
-#define ID_RW_WAIT          8000   /* us */
-
-/* Sense Unit Status completes in about 200 us */
-#define ID_SUS_WAIT         200    /* us */
-
-/* Specify takes a bit longer, 1.25 ms */
-#define ID_SPEC_WAIT        1250   /* us */
-
-/* Sense Interrupt Status is about 142 us */
-#define ID_SIS_WAIT         142    /* us */
-
-/* The catch-all command wait time is about 140 us */
-#define ID_CMD_WAIT         140    /* us */
+/* Static function declarations */
+static SIM_INLINE t_lba id_lba(uint16 cyl, uint8 head, uint8 sec);
 
 /* Data FIFO pointer - Read */
 uint8    id_dpr = 0;
@@ -119,7 +108,7 @@ size_t   id_buf_ptr = 0;
 uint8    id_idfield[ID_IDFIELD_LEN];
 uint8    id_idfield_ptr = 0;
 
-uint8    id_seek_state[ID_NUM_UNITS] = {ID_SEEK_NONE};
+int8     id_seek_state[ID_NUM_UNITS] = {ID_SEEK_NONE};
 
 struct id_dtype {
     uint8  hd;    /* Number of heads */
@@ -175,11 +164,11 @@ MTAB id_mod[] = {
 };
 
 DEVICE id_dev = {
-    "ID", id_unit, id_reg, id_mod,
+    "IDISK", id_unit, id_reg, id_mod,
     ID_NUM_UNITS, 16, 32, 1, 16, 8,
     NULL, NULL, &id_reset,
     NULL, &id_attach, &id_detach, NULL,
-    DEV_DEBUG|DEV_SECTORS, 0, sys_deb_tab,
+    DEV_DEBUG|DEV_DISK|DEV_SECTORS, 0, sys_deb_tab,
     NULL, NULL, &id_help, NULL, NULL,
     &id_description
 };
@@ -199,10 +188,9 @@ static SIM_INLINE void id_clear_fifo()
     id_dpw = 0;
 }
 
-/* TODO: Remove after debugging */
 static SIM_INLINE void id_activate(UNIT *uptr, int32 delay)
 {
-    sim_activate(uptr, delay);
+    sim_activate_abs(uptr, delay);
 }
 
 /*
@@ -283,7 +271,7 @@ t_stat id_unit_svc(UNIT *uptr)
                           "[%08x]\tINTR\t\tCOMPLETING Recal/Seek SEEK_0 UNIT %d\n",
                           R[NUM_PC], unit);
                 id_seek_state[unit] = ID_SEEK_1;
-                id_activate(uptr, DELAY_US(8000)); /* TODO: Correct Delay based on steps */
+                id_activate(uptr, 8000); /* TODO: Correct Delay based on steps */
                 break;
             case ID_SEEK_1:
                 sim_debug(EXECUTE_MSG, &id_dev,
@@ -525,7 +513,9 @@ uint32 id_read(uint32 pa, size_t size)
                     }
                 }
             } else {
-                assert(0); // cmd not Read Data or Read ID
+                /* cmd not Read Data or Read ID */
+                stop_reason = STOP_ERR;
+                return 0;
             }
 
             return data;
@@ -737,7 +727,7 @@ void id_handle_command(uint8 val)
                   "[%08x]\tCOMMAND\t%02x\tSense Int. Status\n",
                   R[NUM_PC], val);
         id_status &= ~ID_STAT_SRQ; /* SIS immediately de-asserts SRQ */
-        id_activate(id_ctlr_unit, DELAY_US(ID_SIS_WAIT));
+        id_activate(id_ctlr_unit, ID_SIS_WAIT);
         break;
     case ID_CMD_SPEC:
         sim_debug(WRITE_MSG, &id_dev,
@@ -747,19 +737,19 @@ void id_handle_command(uint8 val)
         id_etn = id_data[3];
         id_esn = id_data[4];
         id_polling = (id_dtlh & ID_DTLH_POLL) == 0;
-        id_activate(id_ctlr_unit, DELAY_US(ID_SPEC_WAIT));
+        id_activate(id_ctlr_unit, ID_SPEC_WAIT);
         break;
     case ID_CMD_SUS:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tSense Unit Status - %d\n",
                   R[NUM_PC], val, id_ua);
-        id_activate(id_sel_unit, DELAY_US(ID_SUS_WAIT));
+        id_activate(id_sel_unit, ID_SUS_WAIT);
         break;
     case ID_CMD_DERR:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tDetect Error\n",
                   R[NUM_PC], val);
-        id_activate(id_ctlr_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_ctlr_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_RECAL:
         time = id_cyl[id_unit_num];
@@ -769,12 +759,12 @@ void id_handle_command(uint8 val)
             sim_debug(WRITE_MSG, &id_dev,
                       "[%08x]\tCOMMAND\t%02x\tRecalibrate - %d - POLLING\n",
                       R[NUM_PC], val, id_ua);
-            id_activate(id_sel_unit, DELAY_US(1000));
+            id_activate(id_sel_unit, 1000);
         } else {
             sim_debug(WRITE_MSG, &id_dev,
                       "[%08x]\tCOMMAND\t%02x\tRecalibrate - %d - NORMAL\n",
                       R[NUM_PC], val, id_ua);
-            id_activate(id_sel_unit, DELAY_US(ID_RECAL_WAIT + (time * ID_SEEK_WAIT)));
+            id_activate(id_sel_unit, (ID_RECAL_WAIT + (time * ID_SEEK_WAIT)));
         }
         break;
     case ID_CMD_SEEK:
@@ -789,12 +779,12 @@ void id_handle_command(uint8 val)
             sim_debug(WRITE_MSG, &id_dev,
                       "[%08x]\tCOMMAND\t%02x\tSeek - %d - POLLING\n",
                       R[NUM_PC], val, id_ua);
-            id_activate(id_sel_unit, DELAY_US(1000));
+            id_activate(id_sel_unit, 4000);
         } else {
             sim_debug(WRITE_MSG, &id_dev,
                       "[%08x]\tCOMMAND\t%02x\tSeek - %d - NORMAL\n",
                       R[NUM_PC], val, id_ua);
-            id_activate(id_sel_unit, DELAY_US(ID_SEEK_BASE + (time * ID_SEEK_WAIT)));
+            id_activate(id_sel_unit, ID_SEEK_BASE + (time * ID_SEEK_WAIT));
         }
         break;
     case ID_CMD_FMT:
@@ -837,7 +827,7 @@ void id_handle_command(uint8 val)
 
         id_data[1] = id_scnt;
 
-        id_activate(id_sel_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_sel_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_VID:
         sim_debug(WRITE_MSG, &id_dev,
@@ -845,7 +835,7 @@ void id_handle_command(uint8 val)
                   R[NUM_PC], val, id_ua);
         id_data[0] = 0;
         id_data[1] = 0x05; /* What do we put here? */
-        id_activate(id_sel_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_sel_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_RID:
         sim_debug(WRITE_MSG, &id_dev,
@@ -866,13 +856,13 @@ void id_handle_command(uint8 val)
                       "[%08x]\tUNIT %d NOT ATTACHED, CANNOT READ ID.\n",
                       R[NUM_PC], id_ua);
         }
-        id_activate(id_sel_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_sel_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_RDIAG:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tRead Diag - %d\n",
                   R[NUM_PC], val, id_ua);
-        id_activate(id_sel_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_sel_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_RDATA:
         sim_debug(WRITE_MSG, &id_dev,
@@ -894,25 +884,25 @@ void id_handle_command(uint8 val)
                       "[%08x]\tUNIT %d NOT ATTACHED, CANNOT READ DATA.\n",
                       R[NUM_PC], id_ua);
         }
-        id_activate(id_sel_unit, DELAY_US(ID_RW_WAIT));
+        id_activate(id_sel_unit, ID_RW_WAIT);
         break;
     case ID_CMD_CHECK:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tCheck - %d\n",
                   R[NUM_PC], val, id_ua);
-        id_activate(id_sel_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_sel_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_SCAN:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tScan - %d\n",
                   R[NUM_PC], val, id_ua);
-        id_activate(id_sel_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_sel_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_VDATA:
         sim_debug(WRITE_MSG, &id_dev,
                   "[%08x]\tCOMMAND\t%02x\tVerify Data - %d\n",
                   R[NUM_PC], val, id_ua);
-        id_activate(id_sel_unit, DELAY_US(ID_CMD_WAIT));
+        id_activate(id_sel_unit, ID_CMD_WAIT);
         break;
     case ID_CMD_WDATA:
         sim_debug(WRITE_MSG, &id_dev,
@@ -934,12 +924,12 @@ void id_handle_command(uint8 val)
                       "[%08x]\tUNIT %d NOT ATTACHED, CANNOT WRITE.\n",
                       R[NUM_PC], id_ua);
         }
-        id_activate(id_sel_unit, DELAY_US(ID_RW_WAIT));
+        id_activate(id_sel_unit, ID_RW_WAIT);
         break;
     }
 }
 
-void id_drq_handled()
+void id_after_dma()
 {
     id_status &= ~ID_STAT_DRQ;
     id_drq = FALSE;
@@ -947,21 +937,21 @@ void id_drq_handled()
 
 CONST char *id_description(DEVICE *dptr)
 {
-    return "MFM Hard Disk Controller";
+    return "Integrated Hard Disk";
 }
 
 t_stat id_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
-    fprintf(st, "Integrated Hard Disk (ID)\n\n");
-    fprintf(st, "The ID device implements the integrated MFM hard disk controller\n");
-    fprintf(st, "of the 3B2/400. Up to two drives are supported on a single controller.\n\n");
+    fprintf(st, "Integrated Hard Disk (IDISK)\n\n");
+    fprintf(st, "The IDISK device implements the integrated MFM hard disk of the\n");
+    fprintf(st, "3B2/400. Up to two drives are supported on a single controller.\n\n");
     fprintf(st, "Supported device types are:\n\n");
     fprintf(st, "  Name    Size    ID    Cyl  Head  Sec  Byte/Sec  Description\n");
     fprintf(st, "  ----  --------  --   ----  ----  ---  --------  ----------------------\n");
     fprintf(st, "  HD30   30.6 MB   3    697     5   18    512     CDC Wren 94155-36\n");
     fprintf(st, "  HD72   73.2 MB   5    925     9   18    512     CDC Wren II 94156-86\n");
     fprintf(st, "  HD72C  72.9 MB   8    754    11   18    512     Fujitsu M2243AS\n");
-    fprintf(st, "  HD135 135.0 MB  11   1024    15   18    512     Maxtor XT1190 (SVR2)\n\n");
+    fprintf(st, "  HD135 135.0 MB  11   1024    15   18    512     Maxtor XT1190 (SVR2)\n");
     fprintf(st, "  HD161 161.4 MB  11   1224    15   18    512     Maxtor XT1190 (SVR3+)\n\n");
     fprintf(st, "The drive ID and geometry values are used when low-level formatting a\n");
     fprintf(st, "drive using the AT&T 'idtools' utility.\n");

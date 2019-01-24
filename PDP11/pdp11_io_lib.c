@@ -47,10 +47,9 @@ extern int32 int_vec_set[IPL_HLVL][32];                 /* bits to set in vector
 extern int32 (*int_ack[IPL_HLVL][32])(void);
 extern t_stat (*iodispR[IOPAGESIZE >> 1])(int32 *dat, int32 ad, int32 md);
 extern t_stat (*iodispW[IOPAGESIZE >> 1])(int32 dat, int32 ad, int32 md);
+extern DIB *iodibp[IOPAGESIZE >> 1];
 
 extern t_stat build_dib_tab (void);
-
-static DIB *iodibp[IOPAGESIZE >> 1];
 
 static void build_vector_tab (void);
 
@@ -307,6 +306,7 @@ const char *cdname;
 
 if ((dptr == NULL) || (dibp == NULL))                   /* validate args */
     return SCPE_IERR;
+dibp->dptr = dptr;                                      /* save back pointer */
 if (dibp->vnum > VEC_DEVMAX)
     return SCPE_IERR;
 vec = dibp->vec;
@@ -381,7 +381,7 @@ for (i = 0; i < dibp->vnum; i++) {                      /* loop thru vec */
             int_vec[ilvl][ibit] = vec;
         }
     }
-/* Register I/O space address and check for conflicts */
+/* Register(Deregister) I/O space address and check for conflicts */
 for (i = 0; i < (int32) dibp->lnt; i = i + 2) {         /* create entries */
     idx = ((dibp->ba + i) & IOPAGEMASK) >> 1;           /* index into disp */
     if ((iodispR[idx] && dibp->rd &&                    /* conflict? */
@@ -411,11 +411,15 @@ for (i = 0; i < (int32) dibp->lnt; i = i + 2) {         /* create entries */
                                         "Device %s address conflict with %s at 0%o\n",
                              sim_dname (dptr), cdname, (int)dibp->ba);
         }
-    if (dibp->rd)                                       /* set rd dispatch */
-        iodispR[idx] = dibp->rd;
-    if (dibp->wr)                                       /* set wr dispatch */
-        iodispW[idx] = dibp->wr;
-    iodibp[idx] = dibp;                                 /* remember DIB */
+    if ((dibp->rd == NULL) && (dibp->wr == NULL) && (dibp->vnum == 0)) 
+        iodibp[idx] = NULL;                         /* deregister DIB */
+    else {
+        if (dibp->rd)
+            iodispR[idx] = dibp->rd;                /* set rd dispatch */
+        if (dibp->wr)
+            iodispW[idx] = dibp->wr;                /* set wr dispatch */
+        iodibp[idx] = dibp;                         /* remember DIB */
+        }
     }
 return SCPE_OK;
 }
@@ -453,12 +457,7 @@ for (i = 0, dibp = NULL; i < (IOPAGESIZE >> 1); i++) {  /* loop thru entries */
     size_t l;
     if (iodibp[i] && (iodibp[i] != dibp)) {             /* new block? */
         dibp = iodibp[i];                               /* DIB for block */
-        for (j = 0, dptr = NULL; sim_devices[j] != NULL; j++) {
-            if (((DIB*) sim_devices[j]->ctxt) == dibp) {
-                dptr = sim_devices[j];                  /* locate device */
-                break;
-                }                                       /* end if */
-            }                                           /* end for j */
+        dptr = dibp->dptr;
         if ((dibp->ba+ dibp->lnt - 1) > maxaddr)
             maxaddr = dibp->ba+ dibp->lnt - 1;
         if (dibp->vec > maxvec)
@@ -522,12 +521,7 @@ fputc ('\n', st);
 for (i = 0, dibp = NULL; i < (IOPAGESIZE >> 1); i++) {  /* loop thru entries */
     if (iodibp[i] && (iodibp[i] != dibp)) {             /* new block? */
         dibp = iodibp[i];                               /* DIB for block */
-        for (j = 0, dptr = NULL; sim_devices[j] != NULL; j++) {
-            if (((DIB*) sim_devices[j]->ctxt) == dibp) {
-                dptr = sim_devices[j];                  /* locate device */
-                break;
-                }                                       /* end if */
-            }                                           /* end for j */
+        dptr = dibp->dptr;                              /* locate device */
         fprint_val (st, (t_value) dibp->ba, DEV_RDX, 32, PV_LEFT);
         fprintf (st, " - ");
         fprint_val (st, (t_value) dibp->ba + dibp->lnt - 1, DEV_RDX, 32, PV_LEFT);
@@ -783,6 +777,8 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
     { { NULL },          1,  2,  4, 8 },                /* DTC05, DECvoice */
     { { NULL },          1,  2,  8, 8 },                /* KWV32 (DSV11) */
     { { NULL },          1,  1, 64, 4 },                /* QZA */
+    { { "CH" },          1,  1,  0, 0, 
+        {04140}, {0270} },                              /* CH11 - CHAOS Net - fx CSR, fx VEC */
     { { NULL },         -1 }                            /* end table */
 };
 

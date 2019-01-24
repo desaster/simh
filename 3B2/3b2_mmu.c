@@ -59,6 +59,255 @@ DEVICE mmu_dev = {
     DEV_DEBUG, 0, sys_deb_tab
 };
 
+/*
+ * Find an SD in the cache.
+ */
+static SIM_INLINE t_stat get_sdce(uint32 va, uint32 *sd0, uint32 *sd1)
+{
+    uint32 tag, sdch, sdcl;
+    uint8 ci;
+
+    ci    = (SID(va) * NUM_SDCE) + SD_IDX(va);
+    tag   = SD_TAG(va);
+
+    sdch  = mmu_state.sdch[ci];
+    sdcl  = mmu_state.sdcl[ci];
+
+    if ((sdch & SD_GOOD_MASK) && SDCE_TAG(sdcl) == tag) {
+        *sd0 = SDCE_TO_SD0(sdch, sdcl);
+        *sd1 = SDCE_TO_SD1(sdch);
+        return SCPE_OK;
+    }
+
+    return SCPE_NXM;
+}
+
+/*
+ * Find a PD in the cache. Sets both the PD and the cached access
+ * permissions.
+ */
+static SIM_INLINE t_stat get_pdce(uint32 va, uint32 *pd, uint8 *pd_acc)
+{
+    uint32 tag, pdcll, pdclh, pdcrl, pdcrh;
+    uint8 ci;
+
+    ci    = (SID(va) * NUM_PDCE) + PD_IDX(va);
+    tag   = PD_TAG(va);
+
+    /* Left side */
+    pdcll = mmu_state.pdcll[ci];
+    pdclh = mmu_state.pdclh[ci];
+
+    /* Right side */
+    pdcrl = mmu_state.pdcrl[ci];
+    pdcrh = mmu_state.pdcrh[ci];
+
+    /* Search L and R to find a good entry with a matching tag. */
+    if ((pdclh & PD_GOOD_MASK) && PDCXL_TAG(pdcll) == tag) {
+        *pd = PDCXH_TO_PD(pdclh);
+        *pd_acc = PDCXL_TO_ACC(pdcll);
+        return SCPE_OK;
+    } else if ((pdcrh & PD_GOOD_MASK) && PDCXL_TAG(pdcrl) == tag) {
+        *pd = PDCXH_TO_PD(pdcrh);
+        *pd_acc = PDCXL_TO_ACC(pdcrl);
+        return SCPE_OK;
+    }
+
+    return SCPE_NXM;
+}
+
+static SIM_INLINE void put_sdce(uint32 va, uint32 sd0, uint32 sd1)
+{
+    uint8 ci;
+
+    ci    = (SID(va) * NUM_SDCE) + SD_IDX(va);
+
+    mmu_state.sdcl[ci] = SD_TO_SDCL(va, sd0);
+    mmu_state.sdch[ci] = SD_TO_SDCH(sd0, sd1);
+}
+
+
+static SIM_INLINE void put_pdce(uint32 va, uint32 sd0, uint32 pd)
+{
+    uint8  ci;
+
+    ci    = (SID(va) * NUM_PDCE) + PD_IDX(va);
+
+    /* Cache Replacement Algorithm
+     * (from the WE32101 MMU Information Manual)
+     *
+     * 1. If G==0 for the left-hand entry, the new PD is cached in the
+     *    left-hand entry and the U bit (left-hand side) is cleared to
+     *    0.
+     *
+     * 2. If G==1 for the left-hand entry, and G==0 for the right-hand
+     *    entry, the new PD is cached in the right-hand entry and the
+     *    U bit (left-hand side) is set to 1.
+     *
+     * 3. If G==1 for both entries, the U bit in the left-hand entry
+     *    is examined. If U==0, the new PD is cached in the right-hand
+     *    entry of the PDC row and U is set to 1. If U==1, it is
+     *    cached in the left-hand entry and U is cleared to 0.
+     */
+
+    if ((mmu_state.pdclh[ci] & PD_GOOD_MASK) == 0) {
+        /* Use the left entry */
+        mmu_state.pdcll[ci] = SD_TO_PDCXL(va, sd0);
+        mmu_state.pdclh[ci] = PD_TO_PDCXH(pd, sd0);
+        mmu_state.pdclh[ci] &= ~PDCLH_USED_MASK;
+    } else if ((mmu_state.pdcrh[ci] & PD_GOOD_MASK) == 0) {
+        /* Use the right entry */
+        mmu_state.pdcrl[ci] = SD_TO_PDCXL(va, sd0);
+        mmu_state.pdcrh[ci] = PD_TO_PDCXH(pd, sd0);
+        mmu_state.pdclh[ci] |= PDCLH_USED_MASK;
+    } else {
+        /* Pick the least-recently-replaced side */
+        if (mmu_state.pdclh[ci] & PDCLH_USED_MASK) {
+            mmu_state.pdcll[ci] = SD_TO_PDCXL(va, sd0);
+            mmu_state.pdclh[ci] = PD_TO_PDCXH(pd, sd0);
+            mmu_state.pdclh[ci] &= ~PDCLH_USED_MASK;
+        } else {
+            mmu_state.pdcrl[ci] = SD_TO_PDCXL(va, sd0);
+            mmu_state.pdcrh[ci] = PD_TO_PDCXH(pd, sd0);
+            mmu_state.pdclh[ci] |= PDCLH_USED_MASK;
+        }
+    }
+}
+
+static SIM_INLINE void flush_sdce(uint32 va)
+{
+    uint8 ci;
+
+    ci  = (SID(va) * NUM_SDCE) + SD_IDX(va);
+
+    if (mmu_state.sdch[ci] & SD_GOOD_MASK) {
+        mmu_state.sdch[ci] &= ~SD_GOOD_MASK;
+    }
+}
+
+static SIM_INLINE void flush_pdce(uint32 va)
+{
+    uint32 tag, pdcll, pdclh, pdcrl, pdcrh;
+    uint8 ci;
+
+    ci  = (SID(va) * NUM_PDCE) + PD_IDX(va);
+    tag = PD_TAG(va);
+
+    /* Left side */
+    pdcll = mmu_state.pdcll[ci];
+    pdclh = mmu_state.pdclh[ci];
+    /* Right side */
+    pdcrl = mmu_state.pdcrl[ci];
+    pdcrh = mmu_state.pdcrh[ci];
+
+    /* Search L and R to find a good entry with a matching tag. */
+    if ((pdclh & PD_GOOD_MASK) && PDCXL_TAG(pdcll) == tag)  {
+        mmu_state.pdclh[ci] &= ~PD_GOOD_MASK;
+    } else if ((pdcrh & PD_GOOD_MASK) && PDCXL_TAG(pdcrl) == tag) {
+        mmu_state.pdcrh[ci] &= ~PD_GOOD_MASK;
+    }
+}
+
+static SIM_INLINE void flush_cache_sec(uint8 sec)
+{
+    int i;
+
+    for (i = 0; i < NUM_SDCE; i++) {
+        mmu_state.sdch[(sec * NUM_SDCE) + i] &= ~SD_GOOD_MASK;
+    }
+    for (i = 0; i < NUM_PDCE; i++) {
+        mmu_state.pdclh[(sec * NUM_PDCE) + i] &= ~PD_GOOD_MASK;
+        mmu_state.pdcrh[(sec * NUM_PDCE) + i] &= ~PD_GOOD_MASK;
+    }
+}
+
+static SIM_INLINE void flush_caches()
+{
+    uint8 i;
+
+    for (i = 0; i < NUM_SEC; i++) {
+        flush_cache_sec(i);
+    }
+}
+
+static SIM_INLINE t_stat mmu_check_perm(uint8 flags, uint8 r_acc)
+{
+    switch(MMU_PERM(flags)) {
+    case 0:  /* No Access */
+        return SCPE_NXM;
+    case 1:  /* Exec Only */
+        if (r_acc != ACC_IF && r_acc != ACC_IFAD) {
+            return SCPE_NXM;
+        }
+        return SCPE_OK;
+    case 2: /* Read / Execute */
+        if (r_acc != ACC_AF && r_acc != ACC_OF &&
+            r_acc != ACC_IF && r_acc != ACC_IFAD &&
+            r_acc != ACC_MT) {
+            return SCPE_NXM;
+        }
+        return SCPE_OK;
+    default:
+        return SCPE_OK;
+    }
+}
+
+/*
+ * Update the M (modified) or R (referenced) bit the SD and cache
+ */
+static SIM_INLINE void mmu_update_sd(uint32 va, uint32 mask)
+{
+    uint32 sd0;
+    uint8  ci;
+
+    ci  = (SID(va) * NUM_SDCE) + SD_IDX(va);
+
+    /* We go back to main memory to find the SD because the SD may
+       have been loaded from cache, which is lossy. */
+    sd0 = pread_w(SD_ADDR(va));
+    pwrite_w(SD_ADDR(va), sd0|mask);
+
+    /* There is no 'R' bit in the SD cache, only an 'M' bit. */
+    if (mask == SD_M_MASK) {
+        mmu_state.sdch[ci] |= mask;
+    }
+}
+
+/*
+ * Update the M (modified) or R (referenced) bit the PD and cache
+ */
+static SIM_INLINE void mmu_update_pd(uint32 va, uint32 pd_addr, uint32 mask)
+{
+    uint32 pd, tag, pdcll, pdclh, pdcrl, pdcrh;
+    uint8  ci;
+
+    tag = PD_TAG(va);
+    ci  = (SID(va) * NUM_PDCE) + PD_IDX(va);
+
+    /* We go back to main memory to find the PD because the PD may
+       have been loaded from cache, which is lossy. */
+    pd = pread_w(pd_addr);
+    pwrite_w(pd_addr, pd|mask);
+
+    /* Update in the cache */
+
+    /* Left side */
+    pdcll = mmu_state.pdcll[ci];
+    pdclh = mmu_state.pdclh[ci];
+
+    /* Right side */
+    pdcrl = mmu_state.pdcrl[ci];
+    pdcrh = mmu_state.pdcrh[ci];
+
+    /* Search L and R to find a good entry with a matching tag, then
+       update the appropriate bit */
+    if ((pdclh & PD_GOOD_MASK) && PDCXL_TAG(pdcll) == tag) {
+        mmu_state.pdclh[ci] |= mask;
+    } else if ((pdcrh & PD_GOOD_MASK) && PDCXL_TAG(pdcrl) == tag) {
+        mmu_state.pdcrh[ci] |= mask;
+    }
+}
+
 t_stat mmu_init(DEVICE *dptr)
 {
     flush_caches();
@@ -76,38 +325,38 @@ uint32 mmu_read(uint32 pa, size_t size)
     case MMU_SDCL:
         data = mmu_state.sdcl[offset];
         sim_debug(READ_MSG, &mmu_dev,
-                  "MMU_SDCL[%d] = %08x\n",
-                  offset, data);
+                  "[%08x] [pa=%08x] MMU_SDCL[%d] = %08x\n",
+                  R[NUM_PC], pa, offset, data);
         break;
     case MMU_SDCH:
         data = mmu_state.sdch[offset];
         sim_debug(READ_MSG, &mmu_dev,
-                  "MMU_SDCH[%d] = %08x\n",
-                  offset, data);
+                  "[%08x] MMU_SDCH[%d] = %08x\n",
+                  R[NUM_PC], offset, data);
         break;
     case MMU_PDCRL:
         data = mmu_state.pdcrl[offset];
         sim_debug(READ_MSG, &mmu_dev,
-                  "MMU_PDCRL[%d] = %08x\n",
-                  offset, data);
+                  "[%08x] MMU_PDCRL[%d] = %08x\n",
+                  R[NUM_PC], offset, data);
         break;
     case MMU_PDCRH:
         data = mmu_state.pdcrh[offset];
         sim_debug(READ_MSG, &mmu_dev,
-                  "MMU_PDCRH[%d] = %08x\n",
-                  offset, data);
+                  "[%08x] MMU_PDCRH[%d] = %08x\n",
+                  R[NUM_PC], offset, data);
         break;
     case MMU_PDCLL:
         data = mmu_state.pdcll[offset];
         sim_debug(READ_MSG, &mmu_dev,
-                  "MMU_PDCLL[%d] = %08x\n",
-                  offset, data);
+                  "[%08x] MMU_PDCLL[%d] = %08x\n",
+                  R[NUM_PC], offset, data);
         break;
     case MMU_PDCLH:
         data = mmu_state.pdclh[offset];
         sim_debug(READ_MSG, &mmu_dev,
-                  "MMU_PDCLH[%d] = %08x\n",
-                  offset, data);
+                  "[%08x] MMU_PDCLH[%d] = %08x\n",
+                  R[NUM_PC], offset, data);
         break;
     case MMU_SRAMA:
         data = mmu_state.sra[offset];
@@ -192,10 +441,10 @@ void mmu_write(uint32 pa, uint32 val, size_t size)
         mmu_state.sra[offset] = val;
         mmu_state.sec[offset].addr = val & 0xffffffe0;
         /* We flush the entire section on writing SRAMA */
-        flush_cache_sec((uint8) offset);
         sim_debug(WRITE_MSG, &mmu_dev,
-                  "[%08x] MMU_SRAMA[%d] = %08x (addr=%08x)\n",
-                  R[NUM_PC], offset, val, mmu_state.sec[offset].addr);
+                  "[%08x] MMU_SRAMA[%d] = %08x\n",
+                  R[NUM_PC], offset, val);
+        flush_cache_sec((uint8) offset);
         break;
     case MMU_SRAMB:
         offset = offset & 3;
@@ -211,23 +460,14 @@ void mmu_write(uint32 pa, uint32 val, size_t size)
         break;
     case MMU_FA:
         mmu_state.faddr = val;
-        sim_debug(WRITE_MSG, &mmu_dev,
-                  "[%08x] MMU_FAULT_ADDR = %08x\n",
-                  R[NUM_PC], val);
         break;
     case MMU_CONF:
         mmu_state.conf = val & 0x7;
-        sim_debug(WRITE_MSG, &mmu_dev,
-                  "[%08x] MMU_CONF = %08x\n",
-                  R[NUM_PC], val);
         break;
     case MMU_VAR:
         mmu_state.var = val;
         flush_sdce(val);
         flush_pdce(val);
-        sim_debug(WRITE_MSG, &mmu_dev,
-                  "[%08x] MMU_VAR = %08x\n",
-                  R[NUM_PC], val);
         break;
     }
 }
@@ -245,8 +485,8 @@ t_bool addr_is_mem(uint32 pa)
 
 t_bool addr_is_io(uint32 pa)
 {
-    return ((pa >= IO_BASE && pa < IO_BASE + IO_SIZE) ||
-            (pa >= IOB_BASE && pa < IOB_BASE + IOB_SIZE));
+    return ((pa >= IO_BOTTOM && pa < IO_TOP) ||
+            (pa >= CIO_BOTTOM && pa < CIO_TOP));
 }
 
 /*
@@ -517,7 +757,7 @@ t_stat mmu_get_pd(uint32 va, uint8 r_acc, t_bool fc,
     pd_addr = SD_SEG_ADDR(sd1) + (PSL(va) * 4);
 
     /* Bounds checking on length */
-    if ((PSL(va) * 4) > MAX_OFFSET(sd0)) {
+    if ((PSL(va) * 4) >= MAX_OFFSET(sd0)) {
         sim_debug(EXECUTE_MSG, &mmu_dev,
                   "[%08x] PDT Length Fault. "
                   "PDT Offset=%08x Max Offset=%08x va=%08x\n",
@@ -547,36 +787,6 @@ t_stat mmu_decode_contig(uint32 va, uint8 r_acc,
                          uint32 sd0, uint32 sd1,
                          t_bool fc, uint32 *pa)
 {
-    if (fc) {
-        /* Verify permissions */
-        if (mmu_check_perm(SD_ACC(sd0), r_acc) != SCPE_OK) {
-            sim_debug(EXECUTE_MSG, &mmu_dev,
-                      "[%08x] SEGMENT: NO ACCESS TO MEMORY AT %08x.\n"
-                      "\t\tcpu_cm=%d acc_req=%x sd_acc=%02x\n",
-                      R[NUM_PC], va, CPU_CM, r_acc, SD_ACC(sd0));
-            MMU_FAULT(MMU_F_ACC);
-            return SCPE_NXM;
-        }
-    }
-
-    /* Do max segment offset check outside any 'fc' checks because we
-       want this to fail even if fc is false. */
-
-    if (SOT(va) > MAX_OFFSET(sd0)) {
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] CONTIGUOUS: Segment Offset Fault. "
-                  "sd0=%08x SOT=%08x len=%08x va=%08x\n",
-                  R[NUM_PC], sd0, SOT(va),
-                  (SD_MAX_OFF(sd0) * 8), va);
-        MMU_FAULT(MMU_F_SEG_OFFSET);
-        return SCPE_NXM;
-    }
-
-
-    /* TODO: It's possible to have BOTH a segment offset violation AND
-       an access violation. We need to cover that instance. */
-
-
     if (fc) {
         /* Update R and M bits if configured */
         if (SHOULD_UPDATE_SD_R_BIT(sd0)) {
@@ -611,17 +821,6 @@ t_stat mmu_decode_paged(uint32 va, uint8 r_acc, t_bool fc,
                         uint32 sd1, uint32 pd,
                         uint8 pd_acc, uint32 *pa)
 {
-    if (fc && mmu_check_perm(pd_acc, r_acc) != SCPE_OK) {
-        sim_debug(EXECUTE_MSG, &mmu_dev,
-                  "[%08x] PAGE: NO ACCESS TO MEMORY AT %08x.\n"
-                  "\t\tcpu_cm=%d r_acc=%x pd_acc=%02x\n"
-                  "\t\tpd=%08x psw=%08x\n",
-                  R[NUM_PC], va, CPU_CM, r_acc, pd_acc,
-                  pd, R[NUM_PSW]);
-        MMU_FAULT(MMU_F_ACC);
-        return SCPE_NXM;
-    }
-
     /* If the PD is not marked present, fail */
     if (!PD_PRESENT(pd)) {
         sim_debug(EXECUTE_MSG, &mmu_dev,
@@ -692,11 +891,21 @@ t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
     sd_cached = get_sdce(va, &sd0, &sd1);
     pd_cached = get_pdce(va, &pd, &pd_acc);
 
-    /* Now, potentially, do miss processing */
-
-    if (sd_cached != SCPE_OK && pd_cached != SCPE_OK) {
-        /* Full miss processing. We have to load both the SD and PD
-         * from main memory, and potentially cache them.  */
+    if (sd_cached == SCPE_OK && pd_cached != SCPE_OK) {
+        if (SD_PAGED(sd0) && mmu_get_pd(va, r_acc, fc, sd0, sd1, &pd, &pd_acc) != SCPE_OK) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Could not get PD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
+                      R[NUM_PC], r_acc, fc, va);
+            return SCPE_NXM;
+        }
+    } else if (sd_cached != SCPE_OK && pd_cached == SCPE_OK) {
+        if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1) != SCPE_OK) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] Could not get SD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
+                      R[NUM_PC], r_acc, fc, va);
+            return SCPE_NXM;
+        }
+    } else if (sd_cached != SCPE_OK && pd_cached != SCPE_OK) {
         if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1) != SCPE_OK) {
             sim_debug(EXECUTE_MSG, &mmu_dev,
                       "[%08x] Could not get SD (full miss). r_acc=%d, fc=%d, va=%08x\n",
@@ -704,56 +913,55 @@ t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa)
             return SCPE_NXM;
         }
 
-        if (!SD_CONTIG(sd0)) {
-            if (mmu_get_pd(va, r_acc, fc, sd0, sd1, &pd, &pd_acc) != SCPE_OK) {
-                sim_debug(EXECUTE_MSG, &mmu_dev,
-                          "[%08x] Could not get PD (full miss). r_acc=%d, fc=%d, va=%08x\n",
-                          R[NUM_PC], r_acc, fc, va);
-                return SCPE_NXM;
-            }
-        }
-    } else if (sd_cached == SCPE_OK && pd_cached != SCPE_OK && !SD_CONTIG(sd0)) {
-        /* Partial miss processing - SDC hit and PDC miss - but only
-         * if segment is paged. */
-        if (mmu_get_pd(va, r_acc, fc, sd0, sd1, &pd, &pd_acc) != SCPE_OK) {
+        if (SD_PAGED(sd0) && mmu_get_pd(va, r_acc, fc, sd0, sd1, &pd, &pd_acc) != SCPE_OK) {
             sim_debug(EXECUTE_MSG, &mmu_dev,
-                      "[%08x] Could not get PD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
+                      "[%08x] Could not get PD (full miss). r_acc=%d, fc=%d, va=%08x\n",
                       R[NUM_PC], r_acc, fc, va);
             return SCPE_NXM;
         }
-    } else if (sd_cached != SCPE_OK && pd_cached == SCPE_OK) {
-        /* Partial miss processing - SDC miss and PDC hit. This is
-         * always paged translation */
-
-        /* First we must bring the SD into cache so that the SD
-         * R & M bits may be updated, if needed. */
-
-        if (mmu_get_sd(va, r_acc, fc, &sd0, &sd1) != SCPE_OK) {
-            sim_debug(EXECUTE_MSG, &mmu_dev,
-                      "[%08x] Could not get SD (partial miss). r_acc=%d, fc=%d, va=%08x\n",
-                      R[NUM_PC], r_acc, fc, va);
-            return SCPE_NXM;
-        }
-
-        /* If the 'L' bit is set in the page descriptor, we need to
-         * do some bounds checking */
-        if (PD_LAST(pd)) {
-            if ((PD_ADDR(pd) + POT(va)) > (SD_SEG_ADDR(sd1) + MAX_OFFSET(sd0))) {
-                sim_debug(EXECUTE_MSG, &mmu_dev,
-                          "[%08x] PAGED: Segment Offset Fault.\n",
-                          R[NUM_PC]);
-                MMU_FAULT(MMU_F_SEG_OFFSET);
-                return SCPE_NXM;
-            }
-        }
-
-        return mmu_decode_paged(va, r_acc, fc, sd1, pd, pd_acc, pa);
     }
 
-    if (SD_CONTIG(sd0)) {
-        return mmu_decode_contig(va, r_acc, sd0, sd1, fc, pa);
-    } else {
+    if (SD_PAGED(sd0)) {
+        if (fc && mmu_check_perm(pd_acc, r_acc) != SCPE_OK) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] PAGED: NO ACCESS TO MEMORY AT %08x.\n"
+                      "\t\tcpu_cm=%d r_acc=%x pd_acc=%02x\n"
+                      "\t\tpd=%08x psw=%08x\n",
+                      R[NUM_PC], va, CPU_CM, r_acc, pd_acc,
+                      pd, R[NUM_PSW]);
+            MMU_FAULT(MMU_F_ACC);
+            return SCPE_NXM;
+        }
+        if (PD_LAST(pd) && (PSL_C(va) | POT(va)) >= MAX_OFFSET(sd0)) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] PAGED: Segment Offset Fault.\n",
+                      R[NUM_PC]);
+            MMU_FAULT(MMU_F_SEG_OFFSET);
+            return SCPE_NXM;
+        }
         return mmu_decode_paged(va, r_acc, fc, sd1, pd, pd_acc, pa);
+    } else {
+        if (fc && mmu_check_perm(SD_ACC(sd0), r_acc) != SCPE_OK) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] CONTIGUOUS: NO ACCESS TO MEMORY AT %08x.\n"
+                      "\t\tsd0=%08x sd0_addr=%08x\n"
+                      "\t\tcpu_cm=%d acc_req=%x sd_acc=%02x\n",
+                      R[NUM_PC], va,
+                      sd0, SD_ADDR(va),
+                      CPU_CM, r_acc, SD_ACC(sd0));
+            MMU_FAULT(MMU_F_ACC);
+            return SCPE_NXM;
+        }
+        if (SOT(va) >= MAX_OFFSET(sd0)) {
+            sim_debug(EXECUTE_MSG, &mmu_dev,
+                      "[%08x] CONTIGUOUS: Segment Offset Fault. "
+                      "sd0=%08x sd_addr=%08x SOT=%08x len=%08x va=%08x\n",
+                      R[NUM_PC], sd0, SD_ADDR(va), SOT(va),
+                      MAX_OFFSET(sd0), va);
+            MMU_FAULT(MMU_F_SEG_OFFSET);
+            return SCPE_NXM;
+        }
+        return mmu_decode_contig(va, r_acc, sd0, sd1, fc, pa);
     }
 }
 

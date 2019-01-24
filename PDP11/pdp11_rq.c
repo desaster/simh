@@ -170,6 +170,7 @@ extern int32 MMR2;
 #define pktq            us10                            /* packet queue */
 #define uf              buf                             /* settable unit flags */
 #define cnum            wait                            /* controller index */
+#define unit_plug       u4                              /* drive unit plug value */
 #define io_status       u5                              /* io status from callback */
 #define io_complete     u6                              /* io completion flag */
 #define rqxb            filebuf                         /* xfer buffer */
@@ -692,10 +693,44 @@ struct drvtyp {
     int32       rctc;                                   /* RCT copies */
     int32       rbn;                                    /* RBNs */
     uint16      mod;                                    /* MSCP model */
-    int32       med;                                    /* MSCP media */
+    int32       MediaId;                                /* MSCP media */
     int32       flgs;                                   /* flags */
     const char  *name;                                  /* name */
     };
+
+/*
+
+MediaId
+
+Is defined in the MSCP Basic Disk Functions Manual, page 4-37 to 4-38:
+
+The media type identifier is a 32-bit number, and it's coded like this:
+The high 25 bits are 5 characters, each coded with 5 bits. The low 7 
+bits is a binary coded 2 digits.
+
+Looking at it, you have:
+D0,D1,A0,A1,A2,N
+
+For an RA81, it would be:
+
+D0,D1 is the preferred device type name for the unit. In our case, 
+that would be "DU".
+A0,A1,A2 is the name of the media used on the unit. In our case "RA".
+N is the value of the two decimal digits, so 81 for this example.
+
+And for letters, the coding is that A=1, B=2 and so on. 0 means the 
+character is not used.
+
+So, again, for an RA81, we would get:
+
+Decimal Values:        4,    21,    18,     1,     0,      81
+Hex Values:            4,    15,    12,     1,     0,      51
+Binary Values:     00100, 10101, 10010, 00001, 00000, 1010001
+Hex 4 bit Nibbles:    2     5     6     4   1     0     5   1
+
+The 32bit value of RA81_MED is 0x25641051
+
+ */
 
 #define RQ_DRV(d) \
   { d##_SECT, d##_SURF, d##_CYL,  d##_TPG, \
@@ -758,7 +793,6 @@ int32 rq_xtime = RQ_XTIME;                              /* transfer time */
 
 typedef struct {
     uint32              cnum;                           /* ctrl number */
-    uint16              ubase;                          /* unit base */
     uint32              sa;                             /* status, addr */
     uint32              saw;                            /* written data */
     uint32              s1dat;                          /* S1 data */
@@ -779,6 +813,7 @@ typedef struct {
     struct uq_ring      cq;                             /* cmd ring */
     struct uq_ring      rq;                             /* rsp ring */
     struct rqpkt        pak[RQ_NPKTS];                  /* packet queue */
+    uint16              max_plug;                       /* highest unit plug number */
     } MSC;
 
 /* debugging bitmaps */
@@ -842,6 +877,8 @@ t_stat rq_boot (int32 unitno, DEVICE *dptr);
 t_stat rq_set_wlk (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat rq_set_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat rq_set_ctype (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat rq_set_plug (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat rq_show_plug (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat rq_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat rq_show_ctype (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat rq_show_wlk (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
@@ -923,7 +960,6 @@ UNIT rq_unit[] = {
     };
 
 REG rq_reg[] = {
-    { GRDATAD (UBASE,   rq_ctx.ubase,   DEV_RDX,  8, 0, "unit base"), REG_RO },
     { GRDATAD (SA,      rq_ctx.sa,      DEV_RDX, 16, 0, "status/address register") },
     { GRDATAD (SAW,     rq_ctx.saw,     DEV_RDX, 16, 0, "written data") },
     { GRDATAD (S1DAT,   rq_ctx.s1dat,   DEV_RDX, 16, 0, "step 1 init host data") },
@@ -958,6 +994,7 @@ REG rq_reg[] = {
     { URDATAD (PKTQ,    rq_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rq_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rq_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
+    { URDATAD (PLUG,    rq_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rq_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rq_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { DRDATA  (DEVLBN,  drv_tab[RA8U_DTYPE].lbn, 22), REG_HRO },
@@ -1045,6 +1082,8 @@ MTAB rq_mod[] = {
       &rq_set_type, NULL, NULL, "Set RAUSER Disk Type and its size" },
     { MTAB_XTD|MTAB_VUN, 0, "TYPE", NULL,
       NULL, &rq_show_type, NULL, "Display device type" },
+    { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "UNIT", "UNIT=val (0-65534)",
+      &rq_set_plug, &rq_show_plug, NULL, "Set/Display Unit plug value" },
     { UNIT_NOAUTO, UNIT_NOAUTO, "noautosize", "NOAUTOSIZE", NULL, NULL, NULL, "Disables disk autosize on attach" },
     { UNIT_NOAUTO,           0, "autosize",   "AUTOSIZE",   NULL, NULL, NULL, "Enables disk autosize on attach" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT={SIMH|VHD|RAW}",
@@ -1104,7 +1143,6 @@ UNIT rqb_unit[] = {
     };
 
 REG rqb_reg[] = {
-    { GRDATAD (UBASE,   rqb_ctx.ubase,   DEV_RDX,  8, 0, "unit base"), REG_RO },
     { GRDATAD (SA,      rqb_ctx.sa,      DEV_RDX, 16, 0, "status/address register") },
     { GRDATAD (SAW,     rqb_ctx.saw,     DEV_RDX, 16, 0, "written data") },
     { GRDATAD (S1DAT,   rqb_ctx.s1dat,   DEV_RDX, 16, 0, "step 1 init host data") },
@@ -1135,6 +1173,7 @@ REG rqb_reg[] = {
     { URDATAD (PKTQ,    rqb_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rqb_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rqb_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
+    { URDATAD (PLUG,    rqb_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rqb_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rqb_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { NULL }
@@ -1179,7 +1218,6 @@ UNIT rqc_unit[] = {
     };
 
 REG rqc_reg[] = {
-    { GRDATAD (UBASE,   rqc_ctx.ubase,   DEV_RDX,  8, 0, "unit base"), REG_RO },
     { GRDATAD (SA,      rqc_ctx.sa,      DEV_RDX, 16, 0, "status/address register") },
     { GRDATAD (SAW,     rqc_ctx.saw,     DEV_RDX, 16, 0, "written data") },
     { GRDATAD (S1DAT,   rqc_ctx.s1dat,   DEV_RDX, 16, 0, "step 1 init host data") },
@@ -1210,6 +1248,7 @@ REG rqc_reg[] = {
     { URDATAD (PKTQ,    rqc_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rqc_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rqc_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
+    { URDATAD (PLUG,    rqc_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rqc_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rqc_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { NULL }
@@ -1254,7 +1293,6 @@ UNIT rqd_unit[] = {
     };
 
 REG rqd_reg[] = {
-    { GRDATAD (UBASE,   rqd_ctx.ubase,   DEV_RDX,  8, 0, "unit base"), REG_RO },
     { GRDATAD (SA,      rqd_ctx.sa,      DEV_RDX, 16, 0, "status/address register") },
     { GRDATAD (SAW,     rqd_ctx.saw,     DEV_RDX, 16, 0, "written data") },
     { GRDATAD (S1DAT,   rqd_ctx.s1dat,   DEV_RDX, 16, 0, "step 1 init host data") },
@@ -1285,6 +1323,7 @@ REG rqd_reg[] = {
     { URDATAD (PKTQ,    rqd_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rqd_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rqd_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
+    { URDATAD (PLUG,    rqd_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rqd_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rqd_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { NULL }
@@ -1573,12 +1612,12 @@ DEVICE *dptr = rq_devmap[uptr->cnum];
 
 sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_tmrsvc\n");
 sim_activate_after (uptr, 1000000);                     /* reactivate */
-for (i = 0; i < RQ_NUMDR; i++) {                        /* poll */
+for (i = 0; i < dptr->numunits - 2; i++) {                        /* poll */
     nuptr = dptr->units + i;
     if ((nuptr->flags & UNIT_ATP) &&                    /* ATN pending? */
         (nuptr->flags & UNIT_ATT) &&                    /* still online? */
         (cp->cflgs & CF_ATN)) {                         /* wanted? */
-        if (!rq_una (cp, i))
+        if (!rq_una (cp, nuptr->unit_plug))
             return SCPE_OK;
         }
     nuptr->flags = nuptr->flags & ~UNIT_ATP;
@@ -1760,7 +1799,7 @@ UNIT *uptr;
 sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_gus\n");
 
 if (cp->pak[pkt].d[CMD_MOD] & MD_NXU) {                 /* next unit? */
-    if (lu >= (cp->ubase + RQ_NUMDR)) {                 /* end of range? */
+    if (lu > cp->max_plug) {                            /* beyond last unit plug? */
         lu = 0;                                         /* reset to 0 */
         cp->pak[pkt].d[RSP_UN] = lu;
         }
@@ -1994,7 +2033,7 @@ if (bc & 1)                                             /* odd byte cnt? */
     return (ST_HST | SB_HST_OC);
 if (bc & 0xF0000000)                                    /* 'reasonable' bc? */
     return (ST_CMD | I_BCNT);
-/* if (lbn & 0xF0000000) return (ST_CMD | I_LBN);     *//* 'reasonable' lbn? */
+// if (lbn & 0xF0000000) return (ST_CMD | I_LBN);       /* 'reasonable' lbn? */
 if (lbn >= maxlbn) {                                    /* accessing RCT? */
     if (lbn >= (maxlbn + drv_tab[dtyp].rcts))           /* beyond copy 1? */
         return (ST_CMD | I_LBN);                        /* lbn err */
@@ -2140,8 +2179,8 @@ bc = GETP32 (pkt, RW_WBCL);                             /* byte count */
 bl = GETP32 (pkt, RW_WBLL);                             /* block addr */
 ma = GETP32 (pkt, RW_WMPL);                             /* block addr */
 
-sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_svc(unit=%d, pkt=%d, cmd=%s, lbn=%0X, bc=%0x, phase=%s)\n",
-           (int)(uptr-rq_devmap[cp->cnum]->units), pkt, rq_cmdname[cp->pak[pkt].d[CMD_OPC]&0x3f], bl, bc,
+sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_svc(%s,unit=%d, pkt=%d, cmd=%s, lbn=%0X, bc=%0x, phase=%s)\n",
+           sim_uname (uptr), uptr->unit_plug, pkt, rq_cmdname[cp->pak[pkt].d[CMD_OPC]&0x3f], bl, bc,
            uptr->io_complete ? "bottom" : "top");
 
 tbc = (bc > RQ_MAXFR)? RQ_MAXFR: bc;                    /* trim cnt to max */
@@ -2404,15 +2443,14 @@ return rq_putpkt (cp, pkt, TRUE);
 
 /* Unit now available attention packet */
 
-t_bool rq_una (MSC *cp, uint16 un)
+t_bool rq_una (MSC *cp, uint16 lu)
 {
 uint16 pkt;
-uint16 lu = cp->ubase + un;
 UNIT *uptr = rq_getucb (cp, lu);
 
-sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_una (Unit=%d)\n", lu);
 if (uptr == NULL)                                       /* huh? */
     return OK;
+sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_una (%s. Unit=%d)\n", sim_uname (uptr), lu);
 if (!rq_deqf (cp, &pkt))                                /* get log pkt */
     return ERR;
 cp->pak[pkt].d[RSP_REFL] = 0;                           /* ref = 0 */
@@ -2593,14 +2631,13 @@ return OK;
 UNIT *rq_getucb (MSC *cp, uint16 lu)
 {
 DEVICE *dptr = rq_devmap[cp->cnum];
-UNIT *uptr;
+uint32 i;
 
-if ((lu < cp->ubase) || (lu >= (cp->ubase + RQ_NUMDR)))
-    return NULL;
-uptr = dptr->units + (lu % RQ_NUMDR);
-if (uptr->flags & UNIT_DIS)
-    return NULL;
-return uptr;
+for (i = 0; i < dptr->numunits - 2; i++)
+    if ((lu == dptr->units[i].unit_plug) &&
+        !(dptr->units[i].flags & UNIT_DIS))
+        return &dptr->units[i];
+return NULL;
 }
 
 /* Hack unit flags */
@@ -2632,7 +2669,7 @@ cp->pak[pkt].d[ONL_UIDB] = 0;
 cp->pak[pkt].d[ONL_UIDC] = 0;
 cp->pak[pkt].d[ONL_UIDD] = (UID_DISK << ONL_UIDD_V_CLS) |
     (drv_tab[dtyp].mod << ONL_UIDD_V_MOD);              /* UID hi */
-PUTP32 (pkt, ONL_MEDL, drv_tab[dtyp].med);              /* media type */
+PUTP32 (pkt, ONL_MEDL, drv_tab[dtyp].MediaId);          /* media type */
 if (all) {                                              /* if long form */
     PUTP32 (pkt, ONL_SIZL, maxlbn);                     /* user LBNs */
     cp->pak[pkt].d[ONL_VSNL] = 01234 + lu;              /* vol serial # */
@@ -2797,6 +2834,38 @@ uptr->capac = (t_addr)drv_tab[val].lbn;
 return SCPE_OK;
 }
 
+/* Show unit plug */
+
+t_stat rq_show_plug (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+fprintf (st, "UNIT=%d", uptr->unit_plug);
+return SCPE_OK;
+}
+
+/* Set unit plug */
+
+t_stat rq_set_plug (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
+{
+MSC *cp = rq_ctxmap[uptr->cnum];
+int32 plug;
+uint32 i;
+t_stat r;
+DEVICE *dptr = find_dev_from_unit (uptr);
+
+if (cptr == NULL)
+    return sim_messagef (SCPE_ARG, "Must specify UNIT=value\n");
+plug = (int32) get_uint (cptr, 10, 0xFFFFFFFF, &r);
+if ((r != SCPE_OK) || (plug > 65534))
+    return sim_messagef (SCPE_ARG, "Invalid Unit Plug Number: %s\n", cptr);
+if (uptr->unit_plug == plug)
+    return SCPE_OK;
+for (i=0; i < dptr->numunits - 2; i++)
+    if (dptr->units[i].unit_plug == plug)
+        return sim_messagef (SCPE_ARG, "Unit Plug %d Already In Use on %s\n", plug, sim_uname (&dptr->units[i]));
+uptr->unit_plug = plug;
+return SCPE_OK;
+}
+
 /* Show unit type */
 
 t_stat rq_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
@@ -2863,6 +2932,7 @@ t_stat rq_reset (DEVICE *dptr)
 int32 i, j, cidx;
 UNIT *uptr;
 MSC *cp;
+static t_bool plugs_inited = FALSE;
 DIB *dibp = (DIB *) dptr->ctxt;
 
 sim_debug (DBG_TRC, dptr, "rq_reset\n");
@@ -2878,11 +2948,27 @@ cp->cnum = cidx;                                        /* init index */
 if (cp->ctype == DEFAULT_CTYPE)
     cp->ctype = (UNIBUS? UDA50_CTYPE : RQDX3_CTYPE);
 
-#if defined (VM_VAX)                                    /* VAX */
-cp->ubase = 0;                                          /* unit base = 0 */
-#else                                                   /* PDP-11 */
-cp->ubase = (uint16)(cidx * RQ_NUMDR);                  /* init unit base */
+if (!plugs_inited ) {
+    uint32 d, u = 0;
+    char uname[16];
+
+    sprintf (uname, "%s-TIMER", dptr->name);
+    sim_set_uname (&dptr->units[4], uname);
+    sprintf (uname, "%s-QUESVC", dptr->name);
+    sim_set_uname (&dptr->units[5], uname);
+    plugs_inited  = TRUE;
+    for (i = 0; i < RQ_NUMCT; i++) {
+        for (d = 0; d < rq_devmap[i]->numunits - 2; d++) {
+            rq_devmap[i]->units[d].unit_plug = 
+#if defined (VM_VAX)
+                d;          /* VAX default units */
+#else           
+                u;          /* PDP11 unique unit numbers */
 #endif
+            ++u;
+            }
+        }
+    }
 
 cp->csta = CST_S1;                                      /* init stage 1 */
 cp->s1dat = 0;                                          /* no S1 data */
@@ -2921,6 +3007,9 @@ for (i = 0; i < (RQ_NUMDR + 2); i++) {                  /* init units */
     if (uptr->rqxb == NULL)
         return SCPE_MEM;
     }
+for (i=cp->max_plug=0; i<RQ_NUMDR; i++)
+    if (dptr->units[i].unit_plug > cp->max_plug)
+        cp->max_plug = (uint16)dptr->units[i].unit_plug;
 return auto_config (0, 0);                              /* run autoconfig */
 }
 
@@ -3004,11 +3093,12 @@ t_stat rq_boot (int32 unitno, DEVICE *dptr)
 {
 size_t i;
 DIB *dibp = (DIB *) dptr->ctxt;
+UNIT *uptr = &dptr->units[unitno];
 
 for (i = 0; i < BOOT_LEN; i++)
-    M[(BOOT_START >> 1) + i] = boot_rom[i];
-M[BOOT_UNIT >> 1] = unitno & 3;
-M[BOOT_CSR >> 1] = dibp->ba & DMASK;
+    WrMemW (BOOT_START + (2 * i), boot_rom[i]);
+WrMemW (BOOT_UNIT, (uint16)uptr->unit_plug);
+WrMemW (BOOT_CSR, dibp->ba & DMASK);
 cpu_set_boot (BOOT_ENTRY);
 return SCPE_OK;
 }

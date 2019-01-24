@@ -31,16 +31,16 @@
 #include "sim_defs.h"
 #include "sim_console.h"
 
-#define UNIT_CDR        UNIT_ATTABLE | UNIT_RO | UNIT_DISABLE | UNIT_ROABLE | \
-                                 MODE_029
+#define UNIT_CDR        UNIT_ATTABLE | UNIT_RO | UNIT_DISABLE | MODE_029
 #define UNIT_CDP        UNIT_ATTABLE | UNIT_DISABLE | MODE_029
 #define UNIT_LPR        UNIT_ATTABLE | UNIT_DISABLE
 
-/* For Card reader, when set returns end of file at end of deck. */
-/* Reset after sent to system */
-#define MODE_EOF        (0x40 << UNIT_V_CARD_MODE)
-
 #define TMR_RTC         0
+
+#define LINENUM    u3
+#define POS        u4
+#define CMD        u5
+#define CARDIMG    up7
 
 
 /* std devices. data structures
@@ -51,7 +51,7 @@
    cdr_mod      Card Reader modifiers list
 */
 
-/* Device status information stored in u5 */
+/* Device status information stored in CMD */
 #define URCSTA_CHMASK   0003    /* Mask of I/O channel to send data on */
 #define URCSTA_CARD     0004    /* Unit has card in buffer */
 #define URCSTA_FULL     0004    /* Unit has full buffer */
@@ -85,6 +85,7 @@ DEBTAB              cdr_debug[] = {
 
 #if NUM_DEVS_CDR > 0
 t_stat              cdr_boot(int32, DEVICE *);
+t_stat              cdr_ini(DEVICE *);
 t_stat              cdr_srv(UNIT *);
 t_stat              cdr_attach(UNIT *, CONST char *);
 t_stat              cdr_detach(UNIT *);
@@ -93,6 +94,7 @@ const char         *cdr_description(DEVICE *dptr);
 #endif
 
 #if NUM_DEVS_CDP > 0
+t_stat              cdp_ini(DEVICE *);
 t_stat              cdp_srv(UNIT *);
 t_stat              cdp_attach(UNIT *, CONST char *);
 t_stat              cdp_detach(UNIT *);
@@ -107,6 +109,7 @@ struct _lpr_data
 }
 lpr_data[NUM_DEVS_LPR];
 
+t_stat              lpr_ini(DEVICE *);
 t_stat              lpr_srv(UNIT *);
 t_stat              lpr_attach(UNIT *, CONST char *);
 t_stat              lpr_detach(UNIT *);
@@ -147,16 +150,14 @@ MTAB                cdr_mod[] = {
     {MTAB_XTD | MTAB_VUN, 0, "FORMAT", "FORMAT",
           &sim_card_set_fmt, &sim_card_show_fmt, NULL,
           "Sets card format"},
-    {MODE_EOF, MODE_EOF, "EOF", "EOF", NULL, NULL, NULL,
-          "Causes EOF to be set when reader empty"},
     {0}
 };
 
 DEVICE              cdr_dev = {
     "CR", cdr_unit, NULL, cdr_mod,
     NUM_DEVS_CDR, 8, 15, 1, 8, 8,
-    NULL, NULL, NULL, &cdr_boot, &cdr_attach, &cdr_detach,
-    NULL, DEV_DISABLE | DEV_DEBUG, 0, cdr_debug,
+    NULL, NULL, &cdr_ini, &cdr_boot, &cdr_attach, &cdr_detach,
+    NULL, DEV_DISABLE | DEV_DEBUG | DEV_CARD, 0, cdr_debug,
     NULL, NULL, &cdr_help, NULL, NULL,
     &cdr_description
 };
@@ -177,8 +178,8 @@ MTAB                cdp_mod[] = {
 DEVICE              cdp_dev = {
     "CP", cdp_unit, NULL, cdp_mod,
     NUM_DEVS_CDP, 8, 15, 1, 8, 8,
-    NULL, NULL, NULL, NULL, &cdp_attach, &cdp_detach,
-    NULL, DEV_DISABLE | DEV_DEBUG, 0, cdr_debug,
+    NULL, NULL, &cdp_ini, NULL, &cdp_attach, &cdp_detach,
+    NULL, DEV_DISABLE | DEV_DEBUG | DEV_CARD, 0, cdr_debug,
     NULL, NULL, &cdp_help, NULL, NULL,
     &cdp_description
 };
@@ -203,7 +204,7 @@ MTAB                lpr_mod[] = {
 DEVICE              lpr_dev = {
     "LP", lpr_unit, NULL, lpr_mod,
     NUM_DEVS_LPR, 8, 15, 1, 8, 8,
-    NULL, NULL, NULL, NULL, &lpr_attach, &lpr_detach,
+    NULL, NULL, &lpr_ini, NULL, &lpr_attach, &lpr_detach,
     NULL, DEV_DISABLE | DEV_DEBUG, 0, dev_debug,
     NULL, NULL, &lpr_help, NULL, NULL,
     &lpr_description
@@ -218,7 +219,7 @@ UNIT                con_unit[] = {
 DEVICE              con_dev = {
     "CON", con_unit, NULL, NULL,
     NUM_DEVS_CON, 8, 15, 1, 8, 8,
-    NULL, NULL, con_ini, NULL, NULL, NULL,
+    NULL, NULL, &con_ini, NULL, NULL, NULL,
     NULL, DEV_DISABLE | DEV_DEBUG, 0, dev_debug,
     NULL, NULL, &con_help, NULL, NULL,
     &con_description
@@ -228,6 +229,17 @@ DEVICE              con_dev = {
 
 
 #if ((NUM_DEVS_CDR > 0) | (NUM_DEVS_CDP > 0))
+t_stat
+cdr_ini(DEVICE *dptr) {
+     int                i;
+
+     for(i = 0; i < NUM_DEVS_CDR; i++) {
+        cdr_unit[i].CMD = 0;
+        sim_cancel(&cdr_unit[i]);
+     }
+     return SCPE_OK;
+}
+
 /*
  * Device entry points for card reader.
  * And Card punch.
@@ -250,34 +262,32 @@ t_stat card_cmd(uint16 cmd, uint16 dev, uint8 chan, uint16 *wc)
             return SCPE_UNATT;
 
         /* Are we currently tranfering? */
-        if (uptr->u5 & URCSTA_ACTIVE)
+        if (uptr->CMD & URCSTA_ACTIVE)
             return SCPE_BUSY;
 
         /* Check if we ran out of cards */
-        if (uptr->u5 & URCSTA_EOF) {
+        if (uptr->CMD & URCSTA_EOF) {
             /* If end of file, return to system */
-            if (uptr->flags & MODE_EOF) {
-                sim_debug(DEBUG_DETAIL, &cdr_dev, "cdr %d %d report eof\n", u,
-                         chan);
-                chan_set_eof(chan);
-                uptr->flags &= ~MODE_EOF;
+            if (sim_card_input_hopper_count(uptr) != 0) 
+                uptr->CMD &= ~URCSTA_EOF;
+            else {
+                /* Clear unit ready */
+                iostatus &= ~(CARD1_FLAG << u);
+                return SCPE_UNATT;
             }
-            /* Clear unit ready */
-            iostatus &= ~(CARD1_FLAG << u);
-            return SCPE_UNATT;
         }
 
         if (cmd & URCSTA_BINARY) {
-            uptr->u5 |= URCSTA_BIN;
+            uptr->CMD |= URCSTA_BIN;
             *wc = 20;
         } else {
-            uptr->u5 &= ~URCSTA_BIN;
+            uptr->CMD &= ~URCSTA_BIN;
             *wc = 10;
         }
 
-        uptr->u5 &= ~URCSTA_CHMASK;
-        uptr->u5 |= URCSTA_ACTIVE|chan;
-        uptr->u4 = 0;
+        uptr->CMD &= ~URCSTA_CHMASK;
+        uptr->CMD |= URCSTA_ACTIVE|chan;
+        uptr->POS = 0;
 
         sim_activate(uptr, 500000);
         return SCPE_OK;
@@ -289,11 +299,11 @@ t_stat card_cmd(uint16 cmd, uint16 dev, uint8 chan, uint16 *wc)
         uptr = &cdp_unit[0];
         if ((uptr->flags & UNIT_ATT) == 0)
             return SCPE_UNATT;
-        if (uptr->u5 & URCSTA_ACTIVE)
+        if (uptr->CMD & URCSTA_ACTIVE)
              return SCPE_BUSY;
-        uptr->u5 &= ~URCSTA_CHMASK;
-        uptr->u5 |= URCSTA_ACTIVE|chan;
-        uptr->u4 = 0;
+        uptr->CMD &= ~URCSTA_CHMASK;
+        uptr->CMD |= URCSTA_ACTIVE|chan;
+        uptr->POS = 0;
         *wc = 10;
 
         sim_activate(uptr, 500000);
@@ -306,47 +316,43 @@ t_stat card_cmd(uint16 cmd, uint16 dev, uint8 chan, uint16 *wc)
 /* Handle transfer of data for card reader */
 t_stat
 cdr_srv(UNIT *uptr) {
-    int                 chan = URCSTA_CHMASK & uptr->u5;
+    int                 chan = URCSTA_CHMASK & uptr->CMD;
     int                 u = (uptr - cdr_unit);
+    uint16              *image = (uint16 *)(uptr->CARDIMG);
 
-    if (uptr->u5 & URCSTA_EOF) {
+    if (uptr->CMD & URCSTA_EOF) {
         sim_debug(DEBUG_DETAIL, &cdr_dev, "cdr %d %d unready\n", u, chan);
         iostatus &= ~(CARD1_FLAG << u);
-        uptr->u5 &= ~ URCSTA_EOF;
+        uptr->CMD &= ~ URCSTA_EOF;
         return SCPE_OK;
     }
 
 
     /* Check if new card requested. */
-    if (uptr->u4 == 0 && uptr->u5 & URCSTA_ACTIVE &&
-                (uptr->u5 & URCSTA_CARD) == 0) {
-        switch(sim_read_card(uptr)) {
-        case SCPE_UNATT:
+    if (uptr->POS == 0 && uptr->CMD & URCSTA_ACTIVE &&
+                (uptr->CMD & URCSTA_CARD) == 0) {
+        switch(sim_read_card(uptr, image)) {
+        case CDSE_EMPTY:
              iostatus &= ~(CARD1_FLAG << u);
-             uptr->u5 &= ~(URCSTA_ACTIVE);
+             uptr->CMD &= ~(URCSTA_ACTIVE);
              iostatus &= ~(CARD1_FLAG << u);
              chan_set_notrdy(chan);
              break;
-        case SCPE_EOF:
+        case CDSE_EOF:
              /* If end of file, return to system */
-             if (uptr->flags & MODE_EOF) {
-                sim_debug(DEBUG_DETAIL, &cdr_dev, "cdr %d %d set eof\n", u, chan);
-                chan_set_eof(chan);
-                uptr->flags &= ~MODE_EOF;
-             }
-             uptr->u5 &= ~(URCSTA_ACTIVE);
-             uptr->u5 |= URCSTA_EOF;
+             uptr->CMD &= ~(URCSTA_ACTIVE);
+             uptr->CMD |= URCSTA_EOF;
              chan_set_notrdy(chan);
              sim_activate(uptr, 500);
              break;
-        case SCPE_IOERR:
+        case CDSE_ERROR:
              chan_set_error(chan);
-             uptr->u5 &= ~(URCSTA_ACTIVE);
-             uptr->u5 |= URCSTA_EOF;
+             uptr->CMD &= ~(URCSTA_ACTIVE);
+             uptr->CMD |= URCSTA_EOF;
              chan_set_end(chan);
              break;
-        case SCPE_OK:
-             uptr->u5 |= URCSTA_CARD;
+        case CDSE_OK:
+             uptr->CMD |= URCSTA_CARD;
              sim_activate(uptr, 500);
              break;
         }
@@ -355,61 +361,90 @@ cdr_srv(UNIT *uptr) {
 
 
     /* Copy next column over */
-    if (uptr->u5 & URCSTA_CARD &&
-        uptr->u4 < ((uptr->u5 & URCSTA_BIN) ? 160 : 80)) {
-        struct _card_data   *data;
+    if (uptr->CMD & URCSTA_CARD &&
+        uptr->POS < ((uptr->CMD & URCSTA_BIN) ? 160 : 80)) {
         uint8                ch = 0;
         int                  u = (uptr - cdr_unit);
 
-        data = (struct _card_data *)uptr->up7;
-
-        if (uptr->u5 & URCSTA_BIN) {
-            ch = (data->image[uptr->u4 >> 1] >>
-                    ((uptr->u4 & 1)? 0 : 6)) & 077;
+        if (uptr->CMD & URCSTA_BIN) {
+            ch = (image[uptr->POS >> 1] >> ((uptr->POS & 1)?  0 : 6)) & 077;
         } else {
-            ch = sim_hol_to_bcd(data->image[uptr->u4]);
+            ch = sim_hol_to_bcd(image[uptr->POS]);
             /* Remap some characters from 029 to BCL */
+            /* Sim_hol_to_bcd translates cards by looking at the zones 
+             *  12 - 11 and 10 and setting the two most significant
+             * digits of the BCD word to 11xxxx, 10xxxx, 01xxxx
+             * next if 8 is punched it add in 001000 then adds the one
+             * other digit if it is punched to make the lower four bits
+             * of the BCD number.
+             *
+             * A code of 10 only is returned as 1010 or 10.
+             * Some of these codes need to be changed because of overlap
+             * and minor variations in Burroughs code to IBM029 code.
+             */
+        sim_debug(DEBUG_DATA, &cdr_dev, "cdr %d: Char > %03o ", u, ch);
             switch(ch) {
             case 0:     ch = 020; break; /* Translate blanks */
-            case 10:    /* Check if 0 punch of 82 punch */
-                        if (data->image[uptr->u4] != 0x200) {
-                           ch = 0;
-                           if (uptr->u4 == 0)
-                               chan_set_parity(chan);
-                        }
+            case 012:   if (image[uptr->POS] == 0x082) /* 8-2 punch to 015 */
+                            ch = 015;
                         break;
-            case 0111:
-                        ch = 0;
-                        /* Handle invalid punch */
-                        chan_set_parity(chan);
+            case 016:   ch = 035; break; /* Translate = */
+            case 017:   if (image[uptr->POS] == 0x006) /* Translate " */
+                           ch = 037;
+                        break;
+            case 036:   ch = 016; break;
+            case 037:   ch = 0;          /* Handle ? */
+                        if (uptr->POS == 0)
+                            chan_set_parity(chan);
+                        break;
+            case 052:   if (image[uptr->POS] == 0x482) /* Translate ! not equal */
+                            ch = 032; 
+                        break;
+            case 072:   if (image[uptr->POS] == 0xA00) /* Translate [ */
+                            ch = 074;
+                        else
+                            ch = 036;
+                        break; /* Translate */
+            case 074:   ch = 076; break; /* Translate < */
+            case 076:   ch = 072; break; /* Translate + */
+            case 0177:
+                        if (image[uptr->POS] == 0x405) /* Translate { */
+                            ch = 057;
+                        else if (image[uptr->POS] == 0x805) /* Translate } */
+                            ch = 017;
+                        else {
+                            ch = 0;
+                            /* Handle invalid punch */
+                            chan_set_parity(chan);
+                        }
                         break;  /* Translate ? to error*/
             }
         }
-        sim_debug(DEBUG_DATA, &cdr_dev, "cdr %d: Char > %03o '%c' %d\n", u, ch,
-                        sim_six_to_ascii[ch & 077], uptr->u4);
+        sim_debug(DEBUG_DATA, &cdr_dev, "-> %03o '%c' %d\n", ch,
+                        sim_six_to_ascii[ch & 077], uptr->POS);
         if(chan_write_char(chan, &ch, 0)) {
-            uptr->u5 &= ~(URCSTA_ACTIVE|URCSTA_CARD);
+            uptr->CMD &= ~(URCSTA_ACTIVE|URCSTA_CARD);
             chan_set_end(chan);
             /* Drop ready a bit after the last card is read */
             if (sim_card_eof(uptr)) {
-                uptr->u5 |= URCSTA_EOF;
+                uptr->CMD |= URCSTA_EOF;
                 sim_activate(uptr, 100);
             }
         } else {
-            uptr->u4++;
+            uptr->POS++;
             sim_activate(uptr, 100);
         }
     }
 
     /* Check if last column */
-    if (uptr->u5 & URCSTA_CARD &&
-        uptr->u4 == ((uptr->u5 & URCSTA_BIN) ? 160 : 80)) {
+    if (uptr->CMD & URCSTA_CARD &&
+        uptr->POS == ((uptr->CMD & URCSTA_BIN) ? 160 : 80)) {
 
-        uptr->u5 &= ~(URCSTA_ACTIVE|URCSTA_CARD);
+        uptr->CMD &= ~(URCSTA_ACTIVE|URCSTA_CARD);
         chan_set_end(chan);
         /* Drop ready a bit after the last card is read */
         if (sim_card_eof(uptr)) {
-            uptr->u5 |= URCSTA_EOF;
+            uptr->CMD |= URCSTA_EOF;
         }
     }
     return SCPE_OK;
@@ -426,7 +461,7 @@ cdr_boot(int32 unit_num, DEVICE * dptr)
     if ((uptr->flags & UNIT_ATT) == 0)
         return SCPE_UNATT;      /* attached? */
     dev = (uptr == &cdr_unit[0]) ? CARD1_DEV : CARD2_DEV;
-    uptr->u5 &= ~URCSTA_ACTIVE;
+    uptr->CMD &= ~URCSTA_ACTIVE;
     desc = ((t_uint64)dev) << DEV_V | DEV_IORD| DEV_BIN | 020LL;
     /* Read in one record */
     return chan_boot(desc);
@@ -440,9 +475,10 @@ cdr_attach(UNIT * uptr, CONST char *file)
 
     if ((r = sim_card_attach(uptr, file)) != SCPE_OK)
         return r;
-    uptr->u5 &= URCSTA_BUSY;
-    uptr->u4 = 0;
-    uptr->u6 = 0;
+    if (uptr->CARDIMG == 0) 
+        uptr->CARDIMG = malloc(sizeof(uint16)*80);
+    uptr->CMD &= URCSTA_BUSY;
+    uptr->POS = 0;
     iostatus |= (CARD1_FLAG << u);
     return SCPE_OK;
 }
@@ -452,6 +488,9 @@ cdr_detach(UNIT * uptr)
 {
     int                 u = uptr-cdr_unit;
 
+    if (uptr->CARDIMG != 0)
+        free(uptr->CARDIMG);
+    uptr->CARDIMG = 0;
     iostatus &= ~(CARD1_FLAG << u);
     return sim_card_detach(uptr);
 }
@@ -463,10 +502,6 @@ cdr_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
    fprintf (st, "The system supports up to two card readers, the second one is disabled\n");
    fprintf (st, "by default. To have the card reader return the EOF flag when the deck\n");
    fprintf (st, "has finished reading do:\n");
-   fprintf (st, "    sim> SET CRn EOF\n");
-   fprintf (st, "This flag is cleared each time a deck has been read, so it must be set\n");
-   fprintf (st, "again after each deck. MCP does not require this to be set as long as\n");
-   fprintf (st, "the deck includes a ?END card\n");
    fprint_set_help(st, dptr);
    fprint_show_help(st, dptr);
    return SCPE_OK;
@@ -486,56 +521,82 @@ cdr_description(DEVICE *dptr)
 
 /* Handle transfer of data for card punch */
 t_stat
-cdp_srv(UNIT *uptr) {
-    int                 chan = URCSTA_CHMASK & uptr->u5;
-    int                 u = (uptr - cdp_unit);
+cdp_ini(DEVICE *dptr) {
+     int                i;
 
-    if (uptr->u5 & URCSTA_BUSY) {
+     for(i = 0; i < NUM_DEVS_CDP; i++) {
+        cdp_unit[i].CMD = 0;
+        sim_cancel(&cdp_unit[i]);
+     }
+     return SCPE_OK;
+}
+
+t_stat
+cdp_srv(UNIT *uptr) {
+    int                 chan = URCSTA_CHMASK & uptr->CMD;
+    int                 u = (uptr - cdp_unit);
+    uint16              *image = (uint16 *)(uptr->CARDIMG);
+
+    if (uptr->CMD & URCSTA_BUSY) {
         /* Done waiting, punch card */
-        if (uptr->u5 & URCSTA_FULL) {
+        if (uptr->CMD & URCSTA_FULL) {
               sim_debug(DEBUG_DETAIL, &cdp_dev, "cdp %d %d punch\n", u, chan);
-              switch(sim_punch_card(uptr, NULL)) {
-              case SCPE_EOF:
-              case SCPE_UNATT:
+              switch(sim_punch_card(uptr, image)) {
+              case CDSE_EOF:
+              case CDSE_EMPTY:
                   sim_debug(DEBUG_DETAIL, &cdp_dev, "cdp %d %d set eof\n", u,
                                  chan);
                   chan_set_eof(chan);
                   break;
                  /* If we get here, something is wrong */
-              case SCPE_IOERR:
+              case CDSE_ERROR:
                   chan_set_error(chan);
                   break;
-              case SCPE_OK:
+              case CDSE_OK:
                   break;
               }
-              uptr->u5 &= ~URCSTA_FULL;
+              uptr->CMD &= ~URCSTA_FULL;
               chan_set_end(chan);
         }
-        uptr->u5 &= ~URCSTA_BUSY;
+        uptr->CMD &= ~URCSTA_BUSY;
     }
 
     /* Copy next column over */
-    if (uptr->u5 & URCSTA_ACTIVE && uptr->u4 < 80) {
-        struct _card_data   *data;
+    if (uptr->CMD & URCSTA_ACTIVE && uptr->POS < 80) {
         uint8               ch = 0;
-
-        data = (struct _card_data *)uptr->up7;
+        uint16              hol;
 
         if(chan_read_char(chan, &ch, 0)) {
-             uptr->u5 |= URCSTA_BUSY|URCSTA_FULL;
-             uptr->u5 &= ~URCSTA_ACTIVE;
+             uptr->CMD |= URCSTA_BUSY|URCSTA_FULL;
+             uptr->CMD &= ~URCSTA_ACTIVE;
         } else {
-            sim_debug(DEBUG_DATA, &cdp_dev, "cdp %d: Char %d < %02o\n", u,
-                         uptr->u4, ch);
-            data->image[uptr->u4++] = sim_bcd_to_hol(ch & 077);
+            hol = 0;
+            switch (ch & 077) {
+            case 015:  hol = 0x082; break;  /* : */
+            case 016:  hol = 0x20A; break;  /* > */
+            case 017:  hol = 0x805; break;  /* } */
+            case 032:  hol = 0x482; break;  /* ! */
+            case 035:  hol = 0X00A; break;  /* = */
+            case 036:  hol = 0x882; break;  /* ] */
+            case 037:  hol = 0x006; break;  /* " */
+            case 057:  hol = 0x405; break;  /* { */
+            case 072:  hol = 0x80A; break;  /* + */
+            case 074:  hol = 0xA00; break;  /* [ */
+            case 076:  hol = 0x822; break;  /* < */
+            default:
+                       hol = sim_bcd_to_hol(ch & 077);
+            }
+            sim_debug(DEBUG_DATA, &cdp_dev, "cdp %d: Char %d < %02o %03x\n", u,
+                         uptr->POS, ch, hol);
+            image[uptr->POS++] = hol;
         }
         sim_activate(uptr, 10);
     }
 
     /* Check if last column */
-    if (uptr->u5 & URCSTA_ACTIVE && uptr->u4 == 80) {
-        uptr->u5 |= URCSTA_BUSY|URCSTA_FULL;
-        uptr->u5 &= ~URCSTA_ACTIVE;
+    if (uptr->CMD & URCSTA_ACTIVE && uptr->POS == 80) {
+        uptr->CMD |= URCSTA_BUSY|URCSTA_FULL;
+        uptr->CMD &= ~URCSTA_ACTIVE;
     }
     return SCPE_OK;
 }
@@ -548,16 +609,24 @@ cdp_attach(UNIT * uptr, CONST char *file)
 
     if ((r = sim_card_attach(uptr, file)) != SCPE_OK)
         return r;
-    uptr->u5 = 0;
-    iostatus |= PUNCH_FLAG;
+    if (uptr->CARDIMG == 0) {
+        uptr->CARDIMG = calloc(80, sizeof(uint16));
+        uptr->CMD = 0;
+        iostatus |= PUNCH_FLAG;
+    }
     return SCPE_OK;
 }
 
 t_stat
 cdp_detach(UNIT * uptr)
 {
-    if (uptr->u5 & URCSTA_FULL)
-        sim_punch_card(uptr, NULL);
+    uint16              *image = (uint16 *)(uptr->CARDIMG);
+
+    if (uptr->CMD & URCSTA_FULL)
+        sim_punch_card(uptr, image);
+    if (uptr->CARDIMG != 0)
+        free(uptr->CARDIMG);
+    uptr->CARDIMG = 0;
     iostatus &= ~PUNCH_FLAG;
     return sim_card_detach(uptr);
 }
@@ -584,6 +653,16 @@ cdp_description(DEVICE *dptr)
 
 /* Line printer routines
 */
+t_stat
+lpr_ini(DEVICE *dptr) {
+     int                i;
+
+     for(i = 0; i < NUM_DEVS_LPR; i++) {
+        lpr_unit[i].CMD = 0;
+        sim_cancel(&lpr_unit[i]);
+     }
+     return SCPE_OK;
+}
 
 #if NUM_DEVS_LPR > 0
 t_stat
@@ -603,7 +682,7 @@ lpr_setlpp(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     if (i < 20 || i > 100)
         return SCPE_ARG;
     uptr->capac = i;
-    uptr->u4 = 0;
+    uptr->LINENUM = 0;
     return SCPE_OK;
 }
 
@@ -626,17 +705,17 @@ print_line(UNIT * uptr, int unit)
 
     char                out[150];       /* Temp conversion buffer */
     int                 i;
-    int                 chan = uptr->u5 & URCSTA_CHMASK;
+    int                 chan = uptr->CMD & URCSTA_CHMASK;
 
     if ((uptr->flags & (UNIT_ATT)) == 0)
         return; /* attached? */
 
-    if (uptr->u3 > 0) {
+    if (uptr->POS > 0) {
         /* Try to convert to text */
         memset(out, 0, sizeof(out));
 
         /* Scan each column */
-        for (i = 0; i < uptr->u3; i++) {
+        for (i = 0; i < uptr->POS; i++) {
             int                 bcd = lpr_data[unit].lbuff[i] & 077;
 
             out[i] = con_to_ascii[bcd];
@@ -647,73 +726,73 @@ print_line(UNIT * uptr, int unit)
         out[i+1] = '\0';
 
         sim_debug(DEBUG_DETAIL, &lpr_dev, "lpr print %s\n", out);
-        if (uptr->u5 & (URCSTA_DOUBLE << URCSTA_CMD_V)) {
+        if (uptr->CMD & (URCSTA_DOUBLE << URCSTA_CMD_V)) {
             out[++i] = '\r';
             out[++i] = '\n';
-            uptr->u4 ++;
+            uptr->LINENUM ++;
         }
         out[++i] = '\r';
         out[++i] = '\n';
-        uptr->u4++;
+        uptr->LINENUM++;
         out[++i] = '\0';
 
         /* Print out buffer */
         sim_fwrite(&out, 1, i, uptr->fileref);
-        uptr->u5 &= ~URCSTA_EOF;
+        uptr->CMD &= ~URCSTA_EOF;
     }
 
 
-    switch ((uptr->u5 >> URCSTA_CMD_V) & URCSTA_SKIP) {
+    switch ((uptr->CMD >> URCSTA_CMD_V) & URCSTA_SKIP) {
     case 0:     /* No special skip */
         break;
     case 1:
     case 2:     /* Skip to top of form */
     case 12:
-        uptr->u4 = uptr->capac+1;
+        uptr->LINENUM = uptr->capac+1;
         break;
 
     case 3:     /* Even lines */
-        if ((uptr->u4 & 1) == 1) {
+        if ((uptr->LINENUM & 1) == 1) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
-            uptr->u4++;
-            uptr->u5 &= ~URCSTA_EOF;
+            uptr->LINENUM++;
+            uptr->CMD &= ~URCSTA_EOF;
         }
         break;
     case 4:     /* Odd lines */
-        if ((uptr->u4 & 1) == 0) {
+        if ((uptr->LINENUM & 1) == 0) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
-            uptr->u4++;
-            uptr->u5 &= ~URCSTA_EOF;
+            uptr->LINENUM++;
+            uptr->CMD &= ~URCSTA_EOF;
         }
         break;
     case 5:     /* Half page */
-        while((uptr->u4 != (uptr->capac/2)) ||
-              (uptr->u4 != (uptr->capac))) {
+        while((uptr->LINENUM != (uptr->capac/2)) ||
+              (uptr->LINENUM != (uptr->capac))) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
-            uptr->u4++;
-            if (((uint32)uptr->u4) > uptr->capac) {
-                uptr->u4 = 1;
+            uptr->LINENUM++;
+            if (((uint32)uptr->LINENUM) > uptr->capac) {
+                uptr->LINENUM = 1;
                 break;
             }
-            uptr->u5 &= ~URCSTA_EOF;
+            uptr->CMD &= ~URCSTA_EOF;
         }
         break;
     case 6:     /* 1/4 Page */
-        while((uptr->u4 != (uptr->capac/4)) ||
-              (uptr->u4 != (uptr->capac/2)) ||
-              (uptr->u4 != (uptr->capac/2+uptr->capac/4)) ||
-              (uptr->u4 != (uptr->capac))) {
+        while((uptr->LINENUM != (uptr->capac/4)) ||
+              (uptr->LINENUM != (uptr->capac/2)) ||
+              (uptr->LINENUM != (uptr->capac/2+uptr->capac/4)) ||
+              (uptr->LINENUM != (uptr->capac))) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
-            uptr->u4++;
-            if (((uint32)uptr->u4) > uptr->capac) {
-                uptr->u4 = 1;
+            uptr->LINENUM++;
+            if (((uint32)uptr->LINENUM) > uptr->capac) {
+                uptr->LINENUM = 1;
                 break;
             }
-            uptr->u5 &= ~URCSTA_EOF;
+            uptr->CMD &= ~URCSTA_EOF;
         }
         break;
     case 7:     /* User defined, now 1 line */
@@ -723,14 +802,14 @@ print_line(UNIT * uptr, int unit)
     case 11:
         sim_fwrite("\r", 1, 1, uptr->fileref);
         sim_fwrite("\n", 1, 1, uptr->fileref);
-        uptr->u4++;
+        uptr->LINENUM++;
         break;
     }
 
 
-    if (((uint32)uptr->u4) > uptr->capac) {
-        uptr->u4 = 1;
-        uptr->u5 |= URCSTA_EOF;
+    if (((uint32)uptr->LINENUM) > uptr->capac) {
+        uptr->LINENUM = 1;
+        uptr->CMD |= URCSTA_EOF;
         sim_fwrite("\f", 1, 1, uptr->fileref);
         sim_fseek(uptr->fileref, 0, SEEK_CUR);
         sim_debug(DEBUG_DETAIL, &lpr_dev, "lpr %d page\n", unit);
@@ -754,7 +833,7 @@ t_stat lpr_cmd(uint16 cmd, uint16 dev, uint8 chan, uint16 *wc)
     uptr = &lpr_unit[u];
 
     /* Are we currently tranfering? */
-    if (uptr->u5 & URCSTA_BUSY)
+    if (uptr->CMD & URCSTA_BUSY)
         return SCPE_BUSY;
 
     if ((uptr->flags & UNIT_ATT) == 0)
@@ -764,13 +843,13 @@ t_stat lpr_cmd(uint16 cmd, uint16 dev, uint8 chan, uint16 *wc)
         *wc = (cmd & URCSTA_DIRECT) ? 17 : 15;
 
     /* Remember not to drop the FULL */
-    uptr->u5 &= ~((077 << URCSTA_CMD_V) | URCSTA_CHMASK);
-    uptr->u5 |= URCSTA_BUSY|chan;
-    uptr->u5 |= (cmd & (URCSTA_SKIP|URCSTA_SINGLE|URCSTA_DOUBLE))
+    uptr->CMD &= ~((077 << URCSTA_CMD_V) | URCSTA_CHMASK);
+    uptr->CMD |= URCSTA_BUSY|chan;
+    uptr->CMD |= (cmd & (URCSTA_SKIP|URCSTA_SINGLE|URCSTA_DOUBLE))
                 << URCSTA_CMD_V;
-    uptr->u3 = 0;
+    uptr->POS = 0;
     sim_debug(DEBUG_CMD, &lpr_dev, "%d: Cmd WRS %d %02o %o\n", u, chan,
-                 cmd & (URCSTA_SKIP|URCSTA_SINGLE|URCSTA_DOUBLE),uptr->u5);
+                 cmd & (URCSTA_SKIP|URCSTA_SINGLE|URCSTA_DOUBLE),uptr->CMD);
     sim_activate(uptr, 100);
     return SCPE_OK;
 }
@@ -778,31 +857,31 @@ t_stat lpr_cmd(uint16 cmd, uint16 dev, uint8 chan, uint16 *wc)
 /* Handle transfer of data for printer */
 t_stat
 lpr_srv(UNIT *uptr) {
-    int                 chan = URCSTA_CHMASK & uptr->u5;
+    int                 chan = URCSTA_CHMASK & uptr->CMD;
     int                 u = (uptr - lpr_unit);
 
-    if (uptr->u5 & URCSTA_FULL) {
+    if (uptr->CMD & URCSTA_FULL) {
         sim_debug(DEBUG_CMD, &lpr_dev, "lpr %d: done\n", u);
-        uptr->u5 &= ~URCSTA_FULL;
+        uptr->CMD &= ~URCSTA_FULL;
         IAR |= (IRQ_3 << u);
     }
 
     /* Copy next column over */
-    if ((uptr->u5 & URCSTA_BUSY) != 0) {
-        if(chan_read_char(chan, &lpr_data[u].lbuff[uptr->u3], 0)) {
+    if ((uptr->CMD & URCSTA_BUSY) != 0) {
+        if(chan_read_char(chan, &lpr_data[u].lbuff[uptr->POS], 0)) {
             /* Done waiting, print line */
             print_line(uptr, u);
             memset(&lpr_data[u].lbuff[0], 0, 144);
-            uptr->u5 |= URCSTA_FULL;
-            uptr->u5 &= ~URCSTA_BUSY;
-            chan_set_wc(chan, (uptr->u3/8));
+            uptr->CMD |= URCSTA_FULL;
+            uptr->CMD &= ~URCSTA_BUSY;
+            chan_set_wc(chan, (uptr->POS/8));
             chan_set_end(chan);
             sim_activate(uptr, 20000);
             return SCPE_OK;
         } else {
             sim_debug(DEBUG_DATA, &lpr_dev, "lpr %d: Char < %02o\n", u,
-                        lpr_data[u].lbuff[uptr->u3]);
-            uptr->u3++;
+                        lpr_data[u].lbuff[uptr->POS]);
+            uptr->POS++;
         }
         sim_activate(uptr, 50);
     }
@@ -817,9 +896,9 @@ lpr_attach(UNIT * uptr, CONST char *file)
 
     if ((r = attach_unit(uptr, file)) != SCPE_OK)
         return r;
-    uptr->u5 = 0;
-    uptr->u4 = 0;
-    uptr->u3 = 0;
+    uptr->CMD = 0;
+    uptr->LINENUM = 0;
+    uptr->POS = 0;
     iostatus |= PRT1_FLAG << u;
     return SCPE_OK;
 }
@@ -828,7 +907,7 @@ t_stat
 lpr_detach(UNIT * uptr)
 {
     int                 u = (uptr - lpr_unit);
-    if (uptr->u5 & URCSTA_FULL)
+    if (uptr->CMD & URCSTA_FULL)
         print_line(uptr, u);
     iostatus &= ~(PRT1_FLAG << u);
     return detach_unit(uptr);
@@ -879,7 +958,7 @@ lpr_description(DEVICE *dptr)
 t_stat
 con_ini(DEVICE *dptr) {
      UNIT               *uptr = &con_unit[0];
-     uptr->u5 = 0;
+     uptr->CMD = 0;
      iostatus |= SPO_FLAG;
      if (!sim_is_active(uptr))
          sim_activate(uptr, 1000);
@@ -892,28 +971,28 @@ con_cmd(uint16 cmd, uint16 dev, uint8 chan, uint16 *wc)
     UNIT        *uptr = &con_unit[0];
 
     /* Are we currently tranfering? */
-    if (uptr->u5 & (URCSTA_READ|URCSTA_FILL|URCSTA_BUSY|URCSTA_INPUT))
+    if (uptr->CMD & (URCSTA_READ|URCSTA_FILL|URCSTA_BUSY|URCSTA_INPUT))
         return SCPE_BUSY;
 
     if (cmd & URCSTA_READ) {
-        if (uptr->u5 & (URCSTA_INPUT|URCSTA_FILL))
+        if (uptr->CMD & (URCSTA_INPUT|URCSTA_FILL))
             return SCPE_BUSY;
         /* Activate input so we can get response */
-        uptr->u5 = 0;
-        uptr->u5 |= URCSTA_INPUT|chan;
+        uptr->CMD = 0;
+        uptr->CMD |= URCSTA_INPUT|chan;
         sim_putchar('I');
         sim_putchar(' ');
         sim_debug(DEBUG_CMD, &con_dev, ": Cmd RDS\n");
-        uptr->u3 = 0;
+        uptr->POS = 0;
     } else {
-        if (uptr->u5 & (URCSTA_INPUT|URCSTA_FILL))
+        if (uptr->CMD & (URCSTA_INPUT|URCSTA_FILL))
             return SCPE_BUSY;
         sim_putchar('R');
         sim_putchar(' ');
         sim_debug(DEBUG_CMD, &con_dev, ": Cmd WRS\n");
-        uptr->u5 = 0;
-        uptr->u5 |= URCSTA_FILL|chan;
-        uptr->u3 = 0;
+        uptr->CMD = 0;
+        uptr->CMD |= URCSTA_FILL|chan;
+        uptr->POS = 0;
     }
     return SCPE_OK;
 }
@@ -923,18 +1002,18 @@ t_stat
 con_srv(UNIT *uptr) {
     t_stat              r;
     uint8               ch;
-    int                 chan = uptr->u5 & URCSTA_CHMASK;
+    int                 chan = uptr->CMD & URCSTA_CHMASK;
 
 
-    uptr->u5 &= ~URCSTA_BUSY;   /* Clear busy */
+    uptr->CMD &= ~URCSTA_BUSY;   /* Clear busy */
 
     /* Copy next column over */
-    if (uptr->u5 & URCSTA_FILL) {
+    if (uptr->CMD & URCSTA_FILL) {
         if(chan_read_char(chan, &ch, 0)) {
              sim_putchar('\r');
              sim_putchar('\n');
              sim_debug(DEBUG_EXP, &con_dev, "\n\r");
-             uptr->u5 &= ~URCSTA_FILL;
+             uptr->CMD &= ~URCSTA_FILL;
              chan_set_end(chan);
        } else {
              ch &= 077;
@@ -943,7 +1022,7 @@ con_srv(UNIT *uptr) {
        }
     }
 
-    if (uptr->u5 & URCSTA_READ) {
+    if (uptr->CMD & URCSTA_READ) {
         ch = con_data[0].ibuff[con_data[0].outptr++];
 
         if(chan_write_char(chan, &ch,
@@ -951,7 +1030,7 @@ con_srv(UNIT *uptr) {
              sim_putchar('\r');
              sim_putchar('\n');
              sim_debug(DEBUG_EXP, &con_dev, "\n\r");
-             uptr->u5 &= ~URCSTA_READ;
+             uptr->CMD &= ~URCSTA_READ;
              chan_set_end(chan);
        }
     }
@@ -959,7 +1038,7 @@ con_srv(UNIT *uptr) {
     r = sim_poll_kbd();
     if (r & SCPE_KFLAG) {
         ch = r & 0377;
-        if (uptr->u5 & URCSTA_INPUT) {
+        if (uptr->CMD & URCSTA_INPUT) {
            /* Handle end of buffer */
            switch (ch) {
            case 033:
@@ -967,8 +1046,8 @@ con_srv(UNIT *uptr) {
                 /* Fall through */
            case '\r':
            case '\n':
-                uptr->u5 &= ~URCSTA_INPUT;
-                uptr->u5 |= URCSTA_READ;
+                uptr->CMD &= ~URCSTA_INPUT;
+                uptr->CMD |= URCSTA_READ;
                 break;
            case '\b':
            case 0x7f:
@@ -1000,7 +1079,7 @@ con_srv(UNIT *uptr) {
         }
     }
 
-    if (uptr->u5 & (URCSTA_FILL|URCSTA_READ))
+    if (uptr->CMD & (URCSTA_FILL|URCSTA_READ))
         sim_activate(uptr, 1000);
     else
         sim_clock_coschedule_tmr (con_unit, TMR_RTC, 1);

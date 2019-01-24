@@ -236,8 +236,7 @@ extern t_stat vax750_show_bootdev (FILE *st, UNIT *uptr, int32 val, CONST void *
 
 /* I/O system definitions */
 
-#define DZ_MUXES        4                               /* max # of DZV muxes */
-#define DZ_LINES        8                               /* lines per DZV mux */
+#define DZ_MUXES        4                               /* default # of DZV muxes */
 #define VH_MUXES        4                               /* max # of DHQ muxes */
 #define DLX_LINES       16                              /* max # of KL11/DL11's */
 #define DCX_LINES       16                              /* max # of DC11's */
@@ -290,6 +289,8 @@ typedef struct {
                                                         /* simulated through a single */
                                                         /* DEVICE structure (e.g., DZ, VH, DL, DC). */
                                                         /* Populated by auto-configure */
+    DEVICE              *dptr;                          /* back pointer to related device */
+                                                        /* Populated by auto-configure */
     } DIB;
 
 /* Unibus I/O page layout - see pdp11_io_lib.c for address layout details
@@ -317,6 +318,7 @@ typedef struct {
 #define INT_V_DUPRX     11
 #define INT_V_DUPTX     12
 #define INT_V_RK        13
+#define INT_V_CH        14
 
 #define INT_V_LPT       0                               /* BR4 */
 #define INT_V_PTR       1
@@ -350,6 +352,7 @@ typedef struct {
 #define INT_RK          (1u << INT_V_RK)
 #define INT_TDRX        (1u << INT_V_TDRX)
 #define INT_TDTX        (1u << INT_V_TDTX)
+#define INT_CH          (1u << INT_V_CH)
 
 #define IPL_DTA         (0x16 - IPL_HMIN)
 #define IPL_CR          (0x16 - IPL_HMIN)
@@ -362,6 +365,7 @@ typedef struct {
 #define IPL_TS          (0x15 - IPL_HMIN)
 #define IPL_RY          (0x15 - IPL_HMIN)
 #define IPL_XU          (0x15 - IPL_HMIN)
+#define IPL_CH          (0x15 - IPL_HMIN)
 #define IPL_LPT         (0x14 - IPL_HMIN)
 #define IPL_PTR         (0x14 - IPL_HMIN)
 #define IPL_PTP         (0x14 - IPL_HMIN)
@@ -392,12 +396,6 @@ typedef struct {
 #define SET_INT(dv)     int_req[IPL_##dv] = int_req[IPL_##dv] | (INT_##dv)
 #define CLR_INT(dv)     int_req[IPL_##dv] = int_req[IPL_##dv] & ~(INT_##dv)
 #define IORETURN(f,v)   ((f)? (v): SCPE_OK)             /* cond error return */
-
-/* Logging */
-
-#define LOG_CPU_I       0x1                             /* intexc */
-#define LOG_CPU_R       0x2                             /* REI */
-#define LOG_CPU_P       0x4                             /* context */
 
 /* Massbus definitions */
 

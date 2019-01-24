@@ -197,7 +197,7 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 
 /* CMCTL registers */
 
-/* #define CMCTLSIZE    (18 << 2)                     *//* 18 registers */
+// #define CMCTLSIZE    (18 << 2)                       /* 18 registers */
 #define CMCTLSIZE       (19 << 2)                       /* KA655X extra reg */
 #define CMCTLBASE       (REGBASE + 0x100)               /* CMCTL addr base */
 
@@ -271,8 +271,7 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 
 /* I/O system definitions */
 
-#define DZ_MUXES        4                               /* max # of DZV muxes */
-#define DZ_LINES        4                               /* lines per DZV mux */
+#define DZ_MUXES        4                               /* default # of DZV muxes */
 #define VH_MUXES        4                               /* max # of DHQ muxes */
 #define MT_MAXFR        (1 << 16)                       /* magtape max rec */
 
@@ -308,6 +307,8 @@ typedef struct {
                                                         /* where multiple instances are */
                                                         /* simulated through a single */
                                                         /* DEVICE structure (e.g., DZ, VH, DL, DC). */
+                                                        /* Populated by auto-configure */
+    DEVICE              *dptr;                          /* back pointer to related device */
                                                         /* Populated by auto-configure */
     } DIB;
 
@@ -435,12 +436,6 @@ typedef struct {
 #define SET_INT(dv)     int_req[IPL_##dv] = int_req[IPL_##dv] | (INT_##dv)
 #define CLR_INT(dv)     int_req[IPL_##dv] = int_req[IPL_##dv] & ~(INT_##dv)
 #define IORETURN(f,v)   ((f)? (v): SCPE_OK)             /* cond error return */
-
-/* Logging */
-
-#define LOG_CPU_I       0x1                             /* intexc */
-#define LOG_CPU_R       0x2                             /* REI */
-#define LOG_CPU_P       0x4                             /* context */
 
 /* Function prototypes for I/O */
 

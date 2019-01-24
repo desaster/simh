@@ -50,6 +50,15 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define longjmp __libc_longjmp
 #endif
 
+#ifndef MAX
+#define MAX(x,y) ((x) > (y) ? (x) : (y))
+#endif
+#ifndef MIN
+#define MIN(x,y) ((x) < (y) ? (x) : (y))
+#endif
+
+/* -t flag: Translate a virtual address */
+#define EX_T_FLAG 1 << 19
 /* -v flag for examine routine */
 #define EX_V_FLAG 1 << 21
 
@@ -81,10 +90,10 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define PHYS_MEM_BASE 0x2000000
 
 #define ROM_BASE      0
-#define IO_BASE       0x40000
-#define IO_SIZE       0x10000
-#define IOB_BASE      0x200000
-#define IOB_SIZE      0x1E00000
+
+/* IO area */
+#define IO_BOTTOM     0x40000
+#define IO_TOP        0x50000
 
 /* Register numbers */
 #define NUM_FP         9
@@ -94,6 +103,13 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define NUM_PCBP       13
 #define NUM_ISP        14
 #define NUM_PC         15
+
+/* System board interrupt priority levels */
+#define CPU_PIR8_IPL   8
+#define CPU_PIR9_IPL   9
+#define CPU_ID_IF_IPL  11
+#define CPU_IU_DMA_IPL 13
+#define CPU_TMR_IPL    15
 
 #define CPU_CM         (cpu_km ? L_KERNEL : ((R[NUM_PSW] >> PSW_CM) & 3))
 
@@ -106,6 +122,7 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define STOP_ESTK           6     /* Exception stack too deep */
 #define STOP_MMU            7     /* Unimplemented MMU Feature */
 #define STOP_POWER          8     /* System power-off */
+#define STOP_ERR            9     /* Other error */
 
 /* Exceptional conditions handled within the instruction loop */
 #define ABORT_EXC           1      /* CPU exception  */
@@ -130,8 +147,8 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define EXECUTE_MSG  0x008
 #define INIT_MSG     0x010
 #define IRQ_MSG      0x020
-#define IO_D_MSG     0x040
-#define TRACE_MSG    0x080
+#define IO_DBG       0x040
+#define TRACE_DBG    0x080
 #define ERR_MSG      0x100
 
 /* Data types operated on by instructions. NB: These integer values
@@ -292,25 +309,22 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define CLK_MD4   0x08
 #define CLK_MD5   0x0a
 
+/* IO area */
+
+#define MEMSIZE_REG    0x4C003
+#define CIO_BOTTOM     0x200000
+#define CIO_TOP        0x2000000
+#define CIO_SLOTS      12
+
+#define CIO_CMDSTAT    0x80
+#define CIO_SEQBIT     0x40
+
+#define CIO_INT_DELAY  8000
+
 /* Timer definitions */
 
 #define TMR_CLK   0         /* The clock responsible for IPL 15 interrupts */
 #define TPS_CLK   100       /* 100 ticks per second */
-
-#define CLK_MIN_TICKS 500   /* No fewer than 500 sim steps between ticks */
-
-
-/* TIMING SECTION                                  */
-/* ----------------------------------------------- */
-/* Calculate delays (in simulator steps) for times */
-/* System clock runs at 10MHz; 100ns period.       */
-
-#define US_PER_INST         1.6
-
-#define INST_PER_MS         (1000.0 / US_PER_INST)
-
-#define DELAY_US(us)        ((uint32)((us) / US_PER_INST))
-#define DELAY_MS(ms)        ((uint32)(((ms) * 1000) / US_PER_INST))
 
 /* global symbols from the CPU */
 
@@ -325,11 +339,36 @@ extern uint8 fault;
 extern DEBTAB sys_deb_tab[];
 extern t_bool cpu_km;
 
-/* Generic callback function */
-typedef void (*callback)(void);
-
 /* global symbols from the DMAC */
+typedef struct {
+    uint8  page;
+    uint16 addr;     /* Original addr       */
+    uint16 wcount;   /* Original wcount     */
+    uint16 addr_c;   /* Current addr        */
+    int32  wcount_c; /* Current word-count  */
+    uint16 ptr;      /* Pointer into memory */
+} dma_channel;
+
+typedef struct {
+    /* Byte (high/low) flip-flop */
+    uint8  bff;
+
+    /* Address and count registers for channels 0-3 */
+    dma_channel channels[4];
+
+    /* DMAC programmable registers */
+    uint8 command;
+    uint8 mode;
+    uint8 request;
+    uint8 mask;
+    uint8 status;
+} DMA_STATE;
+
+
+/* global symbols from DMA */
+extern DMA_STATE dma_state;
 extern DEVICE dmac_dev;
+uint32 dma_address(uint8 channel, uint32 offset, t_bool r);
 
 /* global symbols from the CSR */
 extern uint16 csr_data;
@@ -344,6 +383,7 @@ extern void increment_modep_a();
 extern void increment_modep_b();
 
 /* global symbols from the MMU */
+extern t_stat mmu_decode_va(uint32 va, uint8 r_acc, t_bool fc, uint32 *pa);
 extern void mmu_enable();
 extern void mmu_disable();
 extern uint8 read_b(uint32 va, uint8 acc);
@@ -354,12 +394,21 @@ extern void write_h(uint32 va, uint16 val);
 extern void write_w(uint32 va, uint32 val);
 
 /* Globally scoped CPU functions */
-void cpu_abort(uint8 et, uint8 isc);
-void cpu_set_irq(uint8 ipl, uint8 id, uint16 csr_flags);
-void cpu_clear_irq(uint8 ipl, uint16 csr_flags);
+extern void cpu_abort(uint8 et, uint8 isc);
+extern void cpu_set_irq(uint8 ipl, uint8 id, uint16 csr_flags);
+extern void cpu_clear_irq(uint8 ipl, uint16 csr_flags);
 
-/* Globally scoped IO functions */
-uint32 io_read(uint32 pa, size_t size);
-void io_write(uint32 pa, uint32 val, size_t size);
+/* global symbols from the IO system */
+extern uint32 io_read(uint32 pa, size_t size);
+extern void io_write(uint32 pa, uint32 val, size_t size);
+extern void cio_clear(uint8 cid);
+extern void cio_xfer();
+extern uint8 cio_int;
+extern uint16 cio_ipl;
+
+/* Future Use: Global symbols from the PORTS card */
+/* extern void ports_express(uint8 cid); */
+/* extern void ports_full(uint8 cid); */
+/* extern void ports_xfer(uint8 cid); */
 
 #endif

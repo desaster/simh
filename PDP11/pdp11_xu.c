@@ -855,7 +855,13 @@ t_stat xu_reset(DEVICE* dptr)
   sim_debug(DBG_TRC, xu->dev, "xu_reset()\n");
   /* One time only initializations */
   if (!xu->var->initialized) {
+    char uname[16];
+
     xu->var->initialized = TRUE;
+    sprintf (uname, "%s-SVC", dptr->name);
+    sim_set_uname (&dptr->units[0], uname);
+    sprintf (uname, "%s-TMRSVC", dptr->name);
+    sim_set_uname (&dptr->units[1], uname);
     /* Set an initial MAC address in the DEC range */
     xu_setmac (dptr->units, 0, "08:00:2B:00:00:00/24", NULL);
     }
@@ -1016,8 +1022,8 @@ int32 xu_command(CTLR* xu)
       xu->var->rrlen = xu->var->udb[5];
       xu->var->rxnext = 0;
       xu->var->txnext = 0;
-// xu_dump_rxring(xu);
-// xu_dump_txring(xu);
+//    xu_dump_rxring(xu);
+//    xu_dump_txring(xu);
 
       break;
 
@@ -1200,7 +1206,7 @@ void xu_process_receive(CTLR* xu)
 
   sim_debug(DBG_TRC, xu->dev, "xu_process_receive(), buffers: %d\n", xu->var->rrlen);
 
-/* xu_dump_rxring(xu); *//* debug receive ring */
+// xu_dump_rxring(xu);  /* debug receive ring */
 
   /* process only when in the running state, and host buffers are available */
   if ((state != STATE_RUNNING) || no_buffers)
@@ -1375,7 +1381,7 @@ void xu_process_receive(CTLR* xu)
 
   /* set or clear interrupt, depending on what happened */
   xu_setclrint(xu, 0);
-// xu_dump_rxring(xu); /* debug receive ring */
+// xu_dump_rxring(xu);  /* debug receive ring */
 
 }
 
@@ -1770,10 +1776,6 @@ t_stat xu_attach(UNIT* uptr, CONST char* cptr)
   }
   eth_set_throttle (xu->var->etherface, xu->var->throttle_time, xu->var->throttle_burst, xu->var->throttle_delay);
   if (SCPE_OK != eth_check_address_conflict (xu->var->etherface, &xu->var->mac)) {
-    char buf[32];
-
-    eth_mac_fmt(&xu->var->mac, buf);     /* format ethernet mac address */
-    sim_printf("%s: MAC Address Conflict on LAN for address %s\n", xu->dev->name, buf);
     eth_close(xu->var->etherface);
     free(tptr);
     free(xu->var->etherface);

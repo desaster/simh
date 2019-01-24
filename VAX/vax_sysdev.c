@@ -1704,6 +1704,8 @@ t_stat vax_boot (int32 flag, CONST char *ptr)
 {
 char gbuf[CBUFSIZE];
 
+if ((ptr = get_sim_sw (ptr)) == NULL)               /* get switches */
+    return SCPE_INVSW;
 get_glyph (ptr, gbuf, 0);                           /* get glyph */
 if (gbuf[0] && strcmp (gbuf, "CPU"))
     return SCPE_ARG;                                /* Only can specify CPU device */
@@ -1727,8 +1729,8 @@ if (*rom == 0) {                                        /* no boot? */
     r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0);
     if (r != SCPE_OK)
         return r;
-    rom_wr_B (ROMBASE+4, sys_model ? 1 : 2);            /* Set Magic Byte to determine system type */
     }
+rom_wr_B (ROMBASE+4, sys_model ? 1 : 2);                /* Set Magic Byte to determine system type */
 sysd_powerup ();
 return SCPE_OK;
 }
@@ -1848,7 +1850,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
     vs_dev.flags = vs_dev.flags & ~DEV_DIS;              /* enable mouse */
     reset_all (0);                                       /* reset everything */
 #else
-    return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support");
+    return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif
     }
 else

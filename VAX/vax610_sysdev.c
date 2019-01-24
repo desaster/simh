@@ -363,6 +363,8 @@ t_stat vax610_boot (int32 flag, CONST char *ptr)
 {
 t_stat r;
 
+if ((ptr = get_sim_sw (ptr)) == NULL)                   /* get switches */
+    return SCPE_INVSW;
 r = vax610_boot_parse (flag, ptr);                      /* parse the boot cmd */
 if (r != SCPE_OK) {                                     /* error? */
     if (r >= SCPE_BASE) {                               /* message available? */
@@ -551,7 +553,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
     strcpy (sim_name, "VAXStation I (KA610)");
     reset_all (0);                                       /* reset everything */
 #else
-    return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support");
+    return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif
     }
 else

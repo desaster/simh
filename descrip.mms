@@ -275,11 +275,11 @@ PCAP_SIMH_INC = /INCL=($(PCAP_DIR))
   @ 'MISS_SAY' "*** Error *** Attempting a Network Build but the VMS-PCAP components are not"
   @ 'MISS_SAY' "*** Error *** available"
   @ 'MISS_SAY' "*** Error *** "
-  @ 'MISS_SAY' "*** Error *** The vms-pcap.zip file can be downloaded from:"
+  @ 'MISS_SAY' "*** Error *** The simh-vms-pcap.zip file can be downloaded from:"
   @ 'MISS_SAY' "*** Error *** "
   @ 'MISS_SAY' "*** Error ***     https://github.com/simh/simh/archive/vms-pcap.zip"
   @ 'MISS_SAY' "*** Error *** "
-  @ 'MISS_SAY' "*** Error *** Be sure to ""unzip -aa simh-vms-pcap.zip"" to properly set the file attributes"
+  @ 'MISS_SAY' "*** Error *** Be sure to ""unzip -a simh-vms-pcap.zip"" to properly set the file attributes"
   @ 'MISS_SAY' "*** Error *** "
   @ 'MISS_SAY' "*** Error *** The PCAP-VMS components are presumed (by this procedure) to be"
   @ 'MISS_SAY' "*** Error *** located in a directory at the same level as the directory"
@@ -562,7 +562,7 @@ PDP18B_SOURCE = $(PDP18B_DIR)PDP18B_DT.C,$(PDP18B_DIR)PDP18B_DRM.C,\
                 $(PDP18B_DIR)PDP18B_RP.C,$(PDP18B_DIR)PDP18B_STDDEV.C,\
                 $(PDP18B_DIR)PDP18B_SYS.C,$(PDP18B_DIR)PDP18B_TT1.C,\
                 $(PDP18B_DIR)PDP18B_RB.C,$(PDP18B_DIR)PDP18B_FPP.C,\
-                $(PDP18B_DIR)PDP18B_G2TTY.C
+                $(PDP18B_DIR)PDP18B_G2TTY.C,$(PDP18B_DIR)PDP18B_DR15.C
 PDP4_OPTIONS = /INCL=($(SIMH_DIR),$(PDP18B_DIR))/DEF=($(CC_DEFS),"PDP4=1")
 PDP7_OPTIONS = /INCL=($(SIMH_DIR),$(PDP18B_DIR))/DEF=($(CC_DEFS),"PDP7=1")
 PDP9_OPTIONS = /INCL=($(SIMH_DIR),$(PDP18B_DIR))/DEF=($(CC_DEFS),"PDP9=1")
@@ -594,7 +594,8 @@ PDP11_SOURCE2 = $(PDP11_DIR)PDP11_TM.C,$(PDP11_DIR)PDP11_TS.C,\
                $(PDP11_DIR)PDP11_XU.C,$(PDP11_DIR)PDP11_TU.C,\
                $(PDP11_DIR)PDP11_DL.C,$(PDP11_DIR)PDP11_RF.C, \
                $(PDP11_DIR)PDP11_RC.C,$(PDP11_DIR)PDP11_KG.C,\
-               $(PDP11_DIR)PDP11_KE.C,$(PDP11_DIR)PDP11_DC.C
+               $(PDP11_DIR)PDP11_KE.C,$(PDP11_DIR)PDP11_DC.C,\
+               $(PDP11_DIR)PDP11_ROM.C,$(PDP11_DIR)PDP11_CH.C
 PDP11_OPTIONS = /INCL=($(SIMH_DIR),$(PDP11_DIR)$(PCAP_INC))\
                 /DEF=($(CC_DEFS),"VM_PDP11=1"$(PCAP_DEFS))
 
@@ -612,7 +613,9 @@ PDP10_SOURCE = $(PDP10_DIR)PDP10_FE.C,\
                $(PDP11_DIR)PDP11_PT.C,$(PDP11_DIR)PDP11_DZ.C,\
                $(PDP11_DIR)PDP11_RY.C,$(PDP11_DIR)PDP11_CR.C,\
                $(PDP11_DIR)PDP11_DUP.C,$(PDP11_DIR)PDP11_DMC.C,\
-               $(PDP11_DIR)PDP11_KMC.C,$(PDP11_DIR)PDP11_XU.C
+               $(PDP11_DIR)PDP11_KMC.C,$(PDP11_DIR)PDP11_XU.C,\
+               $(PDP11_DIR)PDP11_CH.C
+
 PDP10_OPTIONS = /INCL=($(SIMH_DIR),$(PDP10_DIR),$(PDP11_DIR)$(PCAP_INC))\
                 /DEF=($(CC_DEFS),"USE_INT64=1","VM_PDP10=1"$(PCAP_DEFS))
 
@@ -841,7 +844,8 @@ VAX730_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_XU.C,$(PDP11_DIR)PDP11_RY.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,\
+                 $(PDP11_DIR)PDP11_CH.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX730_OPTIONS = /INCL=($(SIMH_DIR),$(VAX730_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_730=1")
@@ -872,7 +876,8 @@ VAX750_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_RP.C,$(PDP11_DIR)PDP11_TU.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,\
+                 $(PDP11_DIR)PDP11_CH.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX750_OPTIONS = /INCL=($(SIMH_DIR),$(VAX750_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_750=1")
@@ -903,7 +908,8 @@ VAX780_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_RP.C,\
                  $(PDP11_DIR)PDP11_TU.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,\
+                 $(PDP11_DIR)PDP11_CH.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX780_OPTIONS = /INCL=($(SIMH_DIR),$(VAX780_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_780=1")
@@ -934,7 +940,8 @@ VAX8600_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_RP.C,\
                  $(PDP11_DIR)PDP11_TU.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,\
+                 $(PDP11_DIR)PDP11_CH.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX8600_OPTIONS = /INCL=($(SIMH_DIR),$(VAX8600_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_860=1")

@@ -247,7 +247,6 @@
   ------------------------------------------------------------------------------
 */
 
-#include <assert.h>
 #include "pdp11_xq.h"
 #include "pdp11_xq_bootrom.h"
 
@@ -1258,7 +1257,7 @@ t_stat xq_process_rbdl(CTLR* xq)
             xq->var->rbdl_buf[4] |= XQ_RST_ESETUP;/* loopback flag */
         break;
       case ETH_ITM_NORMAL: /* normal packet */
-        rbl -= 60;    /* keeps max packet size in 11 bits */
+        rbl = item->packet.len - 60;           /* keeps max packet size in 11 bits */
         xq->var->rbdl_buf[4] = (rbl & 0x0700); /* high bits of rbl */
         xq->var->rbdl_buf[4] |= 0x00f8;        /* set reserved bits to 1 */
         break;
@@ -2554,7 +2553,19 @@ t_stat xq_reset(DEVICE* dptr)
 
   /* One time only initializations */
   if (!xq->var->initialized) {
+    char uname[16];
+
     xq->var->initialized = TRUE;
+    sprintf (uname, "%s-SVC", dptr->name);
+    sim_set_uname (&dptr->units[0], uname);
+    sprintf (uname, "%s-TMRSVC", dptr->name);
+    sim_set_uname (&dptr->units[1], uname);
+    sprintf (uname, "%s-STARTSVC", dptr->name);
+    sim_set_uname (&dptr->units[2], uname);
+    sprintf (uname, "%s-RCVSVC", dptr->name);
+    sim_set_uname (&dptr->units[3], uname);
+    sprintf (uname, "%s-SRQRSVC", dptr->name);
+    sim_set_uname (&dptr->units[4], uname);
     /* Set an initial MAC address in the DEC range */
     xq_setmac (dptr->units, 0, "08:00:2B:00:00:00/24", NULL);
     }
@@ -2890,10 +2901,6 @@ t_stat xq_attach(UNIT* uptr, CONST char* cptr)
     xq->var->must_poll = (SCPE_OK != eth_clr_async(xq->var->etherface));
   }
   if (SCPE_OK != eth_check_address_conflict (xq->var->etherface, &xq->var->mac)) {
-    char buf[32];
-
-    eth_mac_fmt(&xq->var->mac, buf);     /* format ethernet mac address */
-    sim_printf("%s: MAC Address Conflict on LAN for address %s, change the MAC address to a unique value\n", xq->dev->name, buf);
     eth_close(xq->var->etherface);
     free(tptr);
     free(xq->var->etherface);
@@ -3142,7 +3149,7 @@ DIB *dib = (DIB *)dptr->ctxt;
 extern int32 REGFILE[6][2];                 /* R0-R5, two sets */
 
 for (i = 0; i < BOOT_LEN; i++)
-    M[(BOOT_START >> 1) + i] = boot_rom[i];
+    WrMemW (BOOT_START + (2 * i), boot_rom[i]);
 cpu_set_boot (BOOT_ENTRY);
 REGFILE[0][0] = ((dptr == &xq_dev) ? 4 : 5);
 return SCPE_OK;
@@ -3393,7 +3400,8 @@ const char helpString[] =
     "\n"
     " Due to this significant speed mismatch, there can be issues when\n"
     " simulated systems attempt to communicate with real PDP11 and VAX systems\n"
-    " on the LAN.  See SET %D THROTTLE to help accommodate such communications.\n"
+    " on the LAN.  See SET %D THROTTLE to help accommodate such communications\n"
+    " HELP %D CONF SET THROTTLE\n"
     "1 Related Devices\n"
     " The %D can facilitate communication with other simh simulators which\n"
     " have emulated Ethernet devices available as well as real systems that\n"

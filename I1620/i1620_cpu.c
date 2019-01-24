@@ -1,6 +1,6 @@
 /* i1620_cpu.c: IBM 1620 CPU simulator
 
-   Copyright (c) 2002-2017, Robert M. Supnik
+   Copyright (c) 2002-2018, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,7 @@
    This CPU module incorporates code and comments from the 1620 simulator by
    Geoff Kuenning, with his permission.
 
+   05-Jun-18    RMS     Fixed bug in select index A (COVERITY)
    23-Jun-17    RMS     BS should not enable indexing unless configured
    15-Jun-17    RMS     Added more information to IO in progress message
    26-May-17    RMS     Added deferred IO mode for slow devices
@@ -277,8 +278,8 @@ MTAB cpu_mod[] = {
     { IF_IDX, 0, "no IDX", "NOIDX", &cpu_set_opt2, NULL, NULL, "disable indexing" },
     { IF_BIN, IF_BIN, "BIN", "BIN", &cpu_set_opt2, NULL, NULL, "enable binary instructions" },
     { IF_BIN, 0, "no BIN", "NOBIN", &cpu_set_opt2, NULL, NULL, "disable binary instructions" },
-    { IF_FP, IF_FP, "FP", "FP", NULL, NULL, NULL, "disable record marks in add/sub/compare" },
-    { IF_FP, 0, "no FP", "NOFP", NULL, NULL, NULL, "disable record marks in add/sub/compare" },
+    { IF_FP, IF_FP, "FP", "FP", NULL, NULL, NULL, "enable floating point instructions" },
+    { IF_FP, 0, "no FP", "NOFP", NULL, NULL, NULL, "disable floating point instructions" },
     { IF_RMOK, IF_RMOK, "RM allowed", "RMOK", &cpu_set_opt1, NULL, NULL, "enable record marks in add/sub/compare" },
     { IF_RMOK, 0, "RM disallowed", "NORMOK", &cpu_set_opt1, NULL, NULL, "disable record marks in add/sub/compare" },
     { IF_MII, 0, "Model 1", "MOD1", &cpu_set_model, NULL, NULL, "set Model 1" },
@@ -975,7 +976,7 @@ while (reason == SCPE_OK) {                             /* loop until halted */
             break;
         case 1:
             if ((cpu_unit.flags & IF_IDX) != 0)         /* indexing present? */
-                idxe = 1; idxb = 0;                     /* index band A */
+                idxe = 1, idxb = 0;                     /* index band A */
             break;
         case 2:
             if ((cpu_unit.flags & IF_IDX) != 0)         /* indexing present? */

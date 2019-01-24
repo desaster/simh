@@ -1,4 +1,4 @@
-# SIMH v4.0 - Current
+# SIMH v4.0 - 19-01 Current
 
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
 [![Build Status](https://travis-ci.org/simh/simh.svg)](https://travis-ci.org/simh/simh)
@@ -73,7 +73,7 @@
 
 #### Updated HP2100 simulator from Dave Bryan.
 
-#### Beta Sigma 5, 6 & 7 simulator from Bob Supnik
+#### Sigma 5, 6 & 7 simulator from Bob Supnik
 
 #### Beta SAGE-II and PDQ-3 simulators from Holger Veit
 
@@ -112,6 +112,7 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
     DMC11/DMR11 DDCMP DECnet device simulation.  Up to 8 DMC devices are supported.  Packet transport is via TCP or UDP connections.
     KDP11 on PDP11 for DECnet
     DUP11 on PDP11 for DECnet connectivity to talk to DMC, KDP or other DUP devices
+    CH11 on PDP11 and VAX780 for Chaosnet (from Lars Brinkhoff)
     DZ on Unibus systems can have up to 256 ports (default of 32), on 
         Qbus systems 128 port limit (default of 16).
     DZ devices optionally support full modem control (and port speed settings 
@@ -134,6 +135,7 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
 #### PDP10 Enhancements
     KDP11 (from Timothe Litt) for DECnet connectivity to simulators with DMC, DUP or KDP devices
     DMR11 for DECnet connectivity to simulators with DMC, DUP or KDP devices on TOPS10.
+    CH11 (from Lars Brinkhoff) Chaosnet interface.
 
 #### SDS 940 Enhancements
     Support for SDS internal ASCII character encoding during display and data entry.
@@ -326,6 +328,7 @@ Device simulator authors can easily schedule their device polling activities to 
     SCREENSHOT filename.bmp          Save video window to the specified file
     SET ENV Name=Value               Set Environment variable
     SET ENV -p "Prompt" Name=Default Gather User input into an Environment Variable
+    SET ENV -a Name=Expression       Evaluate an expression and store result in an Environment Variable
     SET ASYNCH                       Enable Asynchronous I/O
     SET NOASYNCH                     Disable Asynchronous I/O
     SET VERIFY                       Enable command display while processing DO command files
@@ -356,6 +359,8 @@ Device simulator authors can easily schedule their device polling activities to 
     NOOP                             A no-op command
     ON                               Establish or cancel an ON condition dispatch
     IF                               Test some simulator state and conditionally execute commands
+    IF (C-style-expression)          Test some simulator state and conditionally execute commands
+    ELSE                             commands to execute when the previous IF wasn't true
     CD                               Change working directory
     SET DEFAULT                      Change working directory
     PWD                              Show working directory
@@ -536,7 +541,7 @@ package must be available while building your simulator.  The simh-vms-pcap.zip
 file can be downloaded from https://github.com/simh/simh/archive/vms-pcap.zip   
 This link will return a file called simh-vms-pcap.zip which should be unpacked as follows:
 
-    $ unzip -aa simh-vms-pcap.zip
+    $ unzip -a simh-vms-pcap.zip
     $ rename [.simh-vms-pcap]pcap-vms.dir []
 
 The PCAP-VMS components are presumed (by the descript.mms file) to be 

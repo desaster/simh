@@ -27,7 +27,6 @@
 */
 
 #include "m68k.h"
-#include <assert.h>
 #include "sim_imd.h"
 
 /* Debug flags */
@@ -194,7 +193,7 @@ static DPB dpb[] = {
 
     { "CPM68K", (1 << 24),      (1<<17),0,      0,      0,      0,      0,
         0,      0,      0,      0,      0,      0,      0,      0,  NULL },             /* CP/M-68K HDSK                */
-    
+
     { "EZ80FL", 131072,         32,     0x03,   0x07,   0x00,   127,    0x003E,
         0xC0,   0x00,   0x0000, 0x0000, 0x02,   0x03,   0,      0,  NULL },             /* 128K FLASH                   */
 
@@ -433,10 +432,10 @@ static t_stat hdsk_attach(UNIT *uptr, CONST char *cptr) {
     if (r != SCPE_OK)                           /* error?       */
         return r;
 
-    assert(uptr != NULL);
+    ASSURE(uptr != NULL);
     thisUnitIndex = find_unit_index(uptr);
     unitChar = '0' + thisUnitIndex;
-    assert((0 <= thisUnitIndex) && (thisUnitIndex < HDSK_NUMBER));
+    ASSURE((0 <= thisUnitIndex) && (thisUnitIndex < HDSK_NUMBER));
 
     if (is_imd(uptr)) {
         if ((sim_fsize(uptr -> fileref) == 0) &&
@@ -476,7 +475,7 @@ static t_stat hdsk_attach(UNIT *uptr, CONST char *cptr) {
         if (uptr -> capac == 0)
             uptr -> capac = HDSK_CAPACITY;
     }                                                       /* post condition: uptr -> capac > 0    */
-    assert(uptr -> capac);
+    ASSURE(uptr -> capac);
 
     /* Step 2: Determine format based on disk capacity                                              */
     assignFormat(uptr);
@@ -502,12 +501,12 @@ static t_stat hdsk_attach(UNIT *uptr, CONST char *cptr) {
         uptr -> HDSK_SECTORS_PER_TRACK  = dpb[uptr -> HDSK_FORMAT_TYPE].spt >> dpb[uptr -> HDSK_FORMAT_TYPE].psh;
         uptr -> HDSK_SECTOR_SIZE        = (128 << dpb[uptr -> HDSK_FORMAT_TYPE].psh);
     }
-    assert((uptr -> HDSK_SECTORS_PER_TRACK) && (uptr -> HDSK_SECTOR_SIZE) && (uptr -> HDSK_FORMAT_TYPE >= 0));
+    ASSURE((uptr -> HDSK_SECTORS_PER_TRACK) && (uptr -> HDSK_SECTOR_SIZE) && (uptr -> HDSK_FORMAT_TYPE >= 0));
 
     /* Step 4: Number of tracks is smallest number to accomodate capacity                               */
     uptr -> HDSK_NUMBER_OF_TRACKS = (uptr -> capac + uptr -> HDSK_SECTORS_PER_TRACK *
                                      uptr -> HDSK_SECTOR_SIZE - 1) / (uptr -> HDSK_SECTORS_PER_TRACK * uptr -> HDSK_SECTOR_SIZE);
-    assert( ( (t_addr) ((uptr -> HDSK_NUMBER_OF_TRACKS - 1) * uptr -> HDSK_SECTORS_PER_TRACK *
+    ASSURE( ( (t_addr) ((uptr -> HDSK_NUMBER_OF_TRACKS - 1) * uptr -> HDSK_SECTORS_PER_TRACK *
                         uptr -> HDSK_SECTOR_SIZE) < uptr -> capac) &&
            (uptr -> capac <= (t_addr) (uptr -> HDSK_NUMBER_OF_TRACKS *
                                        uptr -> HDSK_SECTORS_PER_TRACK * uptr -> HDSK_SECTOR_SIZE) ) );
@@ -524,7 +523,7 @@ static t_stat hdsk_detach(UNIT *uptr) {
         unitIndex = find_unit_index(uptr);
         if (unitIndex == -1)
             return SCPE_IERR;
-        assert((0 <= unitIndex) && (unitIndex < HDSK_NUMBER));
+        ASSURE((0 <= unitIndex) && (unitIndex < HDSK_NUMBER));
         result = diskClose(&hdsk_imd[unitIndex]);
         if (result != SCPE_OK) {
             return result;
@@ -672,7 +671,7 @@ static t_stat hdsk_boot(int32 unitno, DEVICE *dptr) {
     }
     installSuccessful = (install_bootrom(bootrom_hdsk, BOOTROM_SIZE_HDSK, HDSK_BOOT_ADDRESS,
                                          FALSE) == SCPE_OK);
-    assert(installSuccessful);
+    ASSURE(installSuccessful);
     *((int32 *) sim_PC -> loc) = HDSK_BOOT_ADDRESS;
     return SCPE_OK;
 }
@@ -785,7 +784,7 @@ static int32 doSeek(void) {
     int32 hostSector;
     int32 sectorSize;
     UNIT *uptr = &hdsk_dev.units[selectedDisk];
-    assert(uptr != NULL);
+    ASSURE(uptr != NULL);
     hostSector = ((dpb[uptr -> HDSK_FORMAT_TYPE].skew == NULL) ?
                   selectedSector : dpb[uptr -> HDSK_FORMAT_TYPE].skew[selectedSector]);
     sectorSize = ((dpb[uptr -> HDSK_FORMAT_TYPE].physicalSectorSize == 0) ?
@@ -846,7 +845,7 @@ int32 hdsk_read(void) {
             hdskStatus = CPM_ERROR;
             return hdskStatus;
         }
-        
+
         if (sim_fread(hdskbuf, 1, uptr -> HDSK_SECTOR_SIZE, uptr -> fileref) != (size_t)(uptr -> HDSK_SECTOR_SIZE)) {
             for (i = 0; i < uptr -> HDSK_SECTOR_SIZE; i++)
                 hdskbuf[i] = CPM_EMPTY;
