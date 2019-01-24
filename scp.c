@@ -8344,7 +8344,7 @@ char *read_line_p_body(const char *prompt, char *cptr, int32 size, FILE *stream)
 #else
 
 char *read_line_p (const char *prompt, char *cptr, int32 size, FILE *stream)
-+#endif
+#endif
 {
 char *tptr;
 #if defined(HAVE_DLOPEN)

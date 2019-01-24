@@ -833,6 +833,35 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     endif
     NETWORK_OPT = $(NETWORK_CCDEFS)
   endif
+  #
+  # blinkenbone changes below
+  #
+  USE_REALCONS=1
+  BLINKENLIGHT_COMMON_DIR=../BlinkenBone/projects/00_common
+  BLINKENLIGHT_API_DIR=../BlinkenBone/projects/07.0_blinkenlight_api
+  REALCONS_DIR=REALCONS
+  REALCONS= \
+    $(REALCONS_DIR)/realcons.c     \
+    $(REALCONS_DIR)/realcons_simh.c \
+    $(BLINKENLIGHT_API_DIR)/blinkenlight_api_client.c \
+    $(BLINKENLIGHT_API_DIR)/rpcgen_linux/rpc_blinkenlight_api_clnt.c \
+    $(BLINKENLIGHT_API_DIR)/rpcgen_linux/rpc_blinkenlight_api_xdr.c \
+    $(BLINKENLIGHT_API_DIR)/blinkenlight_panels.c \
+    $(BLINKENLIGHT_COMMON_DIR)/bitcalc.c
+  # PDP11 part
+  REALCONS_PDP11= \
+    $(REALCONS_DIR)/realcons_console_pdp11_20.c \
+    $(REALCONS_DIR)/realcons_console_pdp11_40.c \
+    $(REALCONS_DIR)/realcons_console_pdp11_70.c
+  REALCONS_OPT=-DUSE_REALCONS \
+    -DBLINKENLIGHT_CLIENT   \
+    -I$(REALCONS_DIR) \
+    -I$(BLINKENLIGHT_COMMON_DIR) \
+    -I$(BLINKENLIGHT_API_DIR)/rpcgen_linux \
+    -I$(BLINKENLIGHT_API_DIR)
+  #
+  # blinkenbone changes above
+  #
   ifneq (binexists,$(shell if $(TEST) -e BIN; then echo binexists; fi))
     MKDIRBIN = mkdir -p BIN
   endif
@@ -1162,8 +1191,10 @@ PDP11 = ${PDP11D}/pdp11_fp.c ${PDP11D}/pdp11_cpu.c ${PDP11D}/pdp11_dz.c \
 	${PDP11D}/pdp11_ta.c ${PDP11D}/pdp11_rc.c ${PDP11D}/pdp11_kg.c \
 	${PDP11D}/pdp11_ke.c ${PDP11D}/pdp11_dc.c ${PDP11D}/pdp11_dmc.c \
 	${PDP11D}/pdp11_kmc.c ${PDP11D}/pdp11_dup.c ${PDP11D}/pdp11_rs.c \
-	${PDP11D}/pdp11_vt.c ${PDP11D}/pdp11_td.c ${PDP11D}/pdp11_io_lib.c $(DISPLAYL) $(DISPLAYVT)
-PDP11_OPT = -DVM_PDP11 -I ${PDP11D} ${NETWORK_OPT} $(DISPLAY_OPT)
+	${PDP11D}/pdp11_vt.c ${PDP11D}/pdp11_td.c ${PDP11D}/pdp11_io_lib.c \
+	$(DISPLAYL) $(DISPLAYVT) \
+	$(REALCONS) $(REALCONS_PDP11)
+PDP11_OPT = -DVM_PDP11 -I ${PDP11D} ${NETWORK_OPT} $(DISPLAY_OPT) ${REALCONS_OPT}
 
 
 VAXD = VAX
