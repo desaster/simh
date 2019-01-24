@@ -7,7 +7,7 @@ into the latest upstream version of
 [simh](https://github.com/simh/simh).
 
 Since this is for my personal use, I've chosen to only merge the PDP11
-changes, since they are useful for the use with
+changes, since they are useful for use with
 [PiDP-11](http://obsolescence.wixsite.com/obsolescence/pidp-11).
 
 The build depends on two source directories included in the BlinkenBone
