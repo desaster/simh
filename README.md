@@ -1,6 +1,6 @@
 # simh <-> blinkenbone merge 
 
-This repository with the only purpose of merging the
+This is a repository with the only purpose of merging the
 "realcons" features from
 [BlinkenBone](https://github.com/j-hoppe/BlinkenBone/)
 into the latest upstream version of
