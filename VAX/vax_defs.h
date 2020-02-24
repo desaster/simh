@@ -1,6 +1,6 @@
 /* vax_defs.h: VAX architecture definitions file
 
-   Copyright (c) 1998-2011, Robert M Supnik
+   Copyright (c) 1998-2019, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -26,6 +26,7 @@
    The author gratefully acknowledges the help of Stephen Shirron, Antonio
    Carlini, and Kevin Peterson in providing specifications for the Qbus VAX's
 
+   23-Apr-19    RMS     Added hook for unpredictable indexed immediate .aw
    05-Nov-11    RMS     Added PSL_IPL17 definition
    09-May-06    RMS     Added system PTE ACV error code
    03-May-06    RMS     Added EDITPC get/put cc's macros
@@ -78,24 +79,47 @@
 #define ABORT_TNV       (-SCB_TNV)                      /* transl not vaid */
 #define ABORT(x)        longjmp (save_env, (x))         /* abort */
 extern jmp_buf save_env;
-#define RSVD_INST_FAULT ABORT (ABORT_RESIN)
+#define RSVD_INST_FAULT(opc) do {                                                                       \
+        char op_num[20];                                                                                \
+        char const *opcd = opcode[opc];                                                                 \
+                                                                                                        \
+        if (sim_deb && !opcd) {                                                                         \
+            opcd = op_num;                                                                              \
+            sprintf (op_num, "Opcode 0x%X", opc);                                                              \
+            sim_debug (LOG_CPU_FAULT_RSVD, &cpu_dev, "%s fault_PC=%08x, PSL=%08x, SP=%08x, PC=%08x\n",  \
+                                                     opcd, fault_PC, PSL, SP, PC);                      \
+            }                                                                                           \
+        ABORT (ABORT_RESIN); } while (0)
 #define RSVD_ADDR_FAULT ABORT (ABORT_RESAD)
-#define RSVD_OPND_FAULT ABORT (ABORT_RESOP)
+#define RSVD_OPND_FAULT(opc) do {                                                                       \
+        sim_debug (LOG_CPU_FAULT_RSVD, &cpu_dev, #opc " fault_PC=%08x, PSL=%08x, SP=%08x, PC=%08x\n",   \
+                                                 fault_PC, PSL, SP, PC);                                \
+        ABORT (ABORT_RESOP); } while (0)
 #define FLT_OVFL_FAULT  p1 = FLT_OVRFLO, ABORT (ABORT_ARITH)
 #define FLT_DZRO_FAULT  p1 = FLT_DIVZRO, ABORT (ABORT_ARITH)
 #define FLT_UNFL_FAULT  p1 = FLT_UNDFLO, ABORT (ABORT_ARITH)
-#define CMODE_FAULT(cd) p1 = (cd), ABORT (ABORT_CMODE)
-#define MACH_CHECK(cd)  p1 = (cd), ABORT (ABORT_MCHK)
+#define CMODE_FAULT(cd) do {                                                                            \
+        sim_debug (LOG_CPU_FAULT_CMODE, &cpu_dev, #cd " fault_PC=%08x, PSL=%08x, SP=%08x, PC=%08x\n",   \
+                                                 fault_PC, PSL, SP, PC);                                \
+        p1 = (cd);                                                                                      \
+        ABORT (ABORT_CMODE); } while (0)
+#define MACH_CHECK(cd)  do {                                                                            \
+        sim_debug (LOG_CPU_FAULT_MCHK, &cpu_dev, #cd " fault_PC=%08x, PSL=%08x, SP=%08x, PC=%08x\n",    \
+                                                 fault_PC, PSL, SP, PC);                                \
+        p1 = (cd);                                                                                      \
+        ABORT (ABORT_MCHK); } while (0)
 
 /* Logging */
 
 #define LOG_CPU_I           0x001                       /* intexc */
 #define LOG_CPU_R           0x002                       /* REI */
-#define LOG_CPU_P           0x004                       /* process context */
-#define LOG_CPU_FAULT_RSVD  0x008                       /* reserved faults */
-#define LOG_CPU_FAULT_FLT   0x010                       /* floating faults*/
-#define LOG_CPU_FAULT_CMODE 0x020                       /* cmode faults */
-#define LOG_CPU_FAULT_MCHK  0x040                       /* machine check faults */
+#define LOG_CPU_A           0x004                       /* Abort */
+#define LOG_CPU_P           0x008                       /* process context */
+#define LOG_CPU_FAULT_RSVD  0x010                       /* reserved faults */
+#define LOG_CPU_FAULT_FLT   0x020                       /* floating faults*/
+#define LOG_CPU_FAULT_CMODE 0x040                       /* cmode faults */
+#define LOG_CPU_FAULT_MCHK  0x080                       /* machine check faults */
+#define LOG_CPU_FAULT_EMUL  0x100                       /* emulated instruction fault */
 
 /* Recovery queue */
 
@@ -384,6 +408,16 @@ extern jmp_buf save_env;
 #define IE_EXC          0                               /* normal exception */
 #define IE_INT          1                               /* interrupt */
 
+/*
+ * FULL_VAX     If defined, all instructions implemented (780 like)
+ * CMPM_VAX     If defined, compatibility mode is implemented.
+ *              (Defined for 780, 750, 730 and 8600 only)
+ * NOEXS_VAX    If defined, no extra string instructions.
+ *              (Defined for MicroVAX I and II only)
+ * NOEXF_VAX    If defined, no extra floating point instructions.
+ *              (Available for future Rigel, Mariah and NVAX implementations)
+ */
+
 /* Decode ROM: opcode entry */
 
 #define DR_F            0x80                            /* FPD ok flag */
@@ -413,6 +447,37 @@ extern jmp_buf save_env;
 #define RB_R5  (13 << DR_V_RESMASK)     /* Regs R0-R5  */
 #define RB_SP  (14 << DR_V_RESMASK)     /* @SP         */
 #define DR_GETRES(x)    (((x) >> DR_V_RESMASK) & DR_M_RESMASK)
+
+/* Extra bits in the opcode flag word of the Decode ROM array 
+   to identify instruction group */
+
+#define DR_V_IGMASK     12
+#define DR_M_IGMASK    0x0007
+#define IG_RSVD     (0 << DR_V_IGMASK)  /* Reserved Opcode */
+#define IG_BASE     (1 << DR_V_IGMASK)  /* Base Instruction Group       */
+#define IG_BSGFL    (2 << DR_V_IGMASK)  /*   Base subgroup G-Float      */
+#define IG_BSDFL    (3 << DR_V_IGMASK)  /*   Base subgroup D-Float      */
+#define IG_PACKD    (4 << DR_V_IGMASK)  /* packed-decimal-string group  */
+#define IG_EXTAC    (5 << DR_V_IGMASK)  /* extended-accuracy group      */
+#define IG_EMONL    (6 << DR_V_IGMASK)  /* emulated-only group          */
+#define IG_VECTR    (7 << DR_V_IGMASK)  /* vector-processing group      */
+#define IG_MAX_GRP  7                   /* Maximum Instruction groups */
+#define DR_GETIGRP(x)    (((x) >> DR_V_IGMASK) & DR_M_IGMASK)
+
+#define VAX_FULL_BASE ((1 << DR_GETIGRP(IG_BASE))  | \
+                       (1 << DR_GETIGRP(IG_BSGFL)) | \
+                       (1 << DR_GETIGRP(IG_BSDFL)))
+#define VAX_BASE   (1 << DR_GETIGRP(IG_BASE))
+#define VAX_GFLOAT (1 << DR_GETIGRP(IG_BSGFL))
+#define VAX_DFLOAT (1 << DR_GETIGRP(IG_BSDFL))
+#define VAX_PACKED (1 << DR_GETIGRP(IG_PACKD))
+#define VAX_EXTAC  (1 << DR_GETIGRP(IG_EXTAC))
+#define VAX_EMONL  (1 << DR_GETIGRP(IG_EMONL))
+#define VAX_VECTR  (1 << DR_GETIGRP(IG_VECTR))
+#define FULL_INSTRUCTION_SET (VAX_FULL_BASE               | \
+                              (1 << DR_GETIGRP(IG_PACKD)) | \
+                              (1 << DR_GETIGRP(IG_EXTAC)) | \
+                              (1 << DR_GETIGRP(IG_EMONL)))
 
 /* Decode ROM: specifier entry */
 
@@ -645,7 +710,7 @@ enum opcodes {
 #define STR_GETDPC(x)   (((x) >> STR_V_DPC) & STR_M_DPC)
 #define STR_GETCHR(x)   (((x) >> STR_V_CHR) & STR_M_CHR)
 #define STR_PACK(m,x)   ((((PC - fault_PC) & STR_M_DPC) << STR_V_DPC) | \
-                    (((m) & STR_M_CHR) << STR_V_CHR) | ((x) & STR_LNMASK))
+                        (((m) & STR_M_CHR) << STR_V_CHR) | ((x) & STR_LNMASK))
 
 /* Read and write */
 
@@ -774,6 +839,10 @@ enum opcodes {
 #define VAX_IDLE_ELN        0x40    /* VAXELN */
 extern uint32 cpu_idle_mask;        /* idle mask */
 extern int32 extra_bytes;           /* bytes referenced by current string instruction */
+extern BITFIELD cpu_psl_bits[];
+extern char const * const opcode[];
+extern const uint16 drom[NUM_INST][MAX_SPEC + 1];
+extern int32 cpu_emulate_exception (int32 *opnd, int32 cc, int32 opc, int32 acc);
 void cpu_idle (void);
 
 /* Instruction History */
@@ -817,6 +886,7 @@ extern int32 pcq_p;                                     /* PC queue ptr */
 extern int32 in_ie;                                     /* in exc, int */
 extern int32 ibcnt, ppc;                                /* prefetch ctl */
 extern int32 hlt_pin;                                   /* HLT pin intr */
+extern int32 mxpr_cc_vc;                                /* cc V & C bits from mtpr/mfpr operations */
 extern int32 mem_err;
 extern int32 crd_err;
 
@@ -901,6 +971,7 @@ extern int32 con_halt (int32 code, int32 cc);
 extern t_stat cpu_boot (int32 unitno, DEVICE *dptr);
 extern t_stat build_dib_tab (void);
 extern void rom_wr_B (int32 pa, int32 val);
+extern int32 cpu_instruction_set;
 
 #if defined (VAX_780)
 #include "vax780_defs.h"
@@ -908,18 +979,48 @@ extern void rom_wr_B (int32 pa, int32 val);
 #include "vax750_defs.h"
 #elif defined (VAX_730)
 #include "vax730_defs.h"
+#elif defined (VAX_410)
+#include "vax410_defs.h"
+#elif defined (VAX_420)
+#include "vax420_defs.h"
+#elif defined (VAX_43)
+#include "vax43_defs.h"
+#elif defined (VAX_440)
+#include "vax440_defs.h"
+#elif defined (IS_1000)
+#include "is1000_defs.h"
 #elif defined (VAX_610)
 #include "vax610_defs.h"
 #elif defined (VAX_620) || defined (VAX_630)
 #include "vax630_defs.h"
+#elif defined (VAX_820)
+#include "vax820_defs.h"
 #elif defined (VAX_860)
 #include "vax860_defs.h"
 #else /* VAX 3900 */
 #include "vaxmod_defs.h"
 #endif
+#ifndef CPU_INSTRUCTION_SET
+#if defined (FULL_VAX)
+#define CPU_INSTRUCTION_SET FULL_INSTRUCTION_SET
+#else
+#define CPU_INSTRUCTION_SET VAX_FULL_BASE
+#endif
+#endif
 #ifndef CPU_MODEL_MODIFIERS
 #define CPU_MODEL_MODIFIERS             /* No model specific CPU modifiers */
 #endif
+#ifndef CPU_INST_MODIFIERS
+#define CPU_INST_MODIFIERS  { MTAB_XTD|MTAB_VDV|MTAB_VALR|MTAB_NMO, 0, "INSTRUCTIONS", "INSTRUCTIONS={{NO}G-FLOAT|{NO}D-FLOAT|{NO}PACKED|{NO}EXTENDED|{NO}EMULATED}", \
+                              &cpu_set_instruction_set, NULL, NULL,                 "Set the CPU Instruction Set" },                    \
+                            { MTAB_XTD|MTAB_VDV, 0, "INSTRUCTIONS", NULL,                                                                    \
+                              NULL,                     &cpu_show_instruction_set, NULL, "Show the CPU Instruction Set (SHOW -V)" },
+#endif
+#ifndef IDX_IMM_TEST
+#define IDX_IMM_TEST RSVD_ADDR_FAULT
+#endif
+
+#include "vax_watch.h"                  /* Watch chip definitions */
 
 #ifdef DONT_USE_INTERNAL_ROM
 #define BOOT_CODE_ARRAY NULL
@@ -930,8 +1031,11 @@ extern t_stat cpu_load_bootcode (const char *filename, const unsigned char *buil
 extern t_stat cpu_print_model (FILE *st);
 extern t_stat cpu_show_model (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern t_stat cpu_set_model (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+extern t_stat cpu_show_instruction_set (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+extern t_stat cpu_set_instruction_set (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat cpu_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 extern t_stat cpu_model_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
+extern void vax_init();
 extern const uint32 byte_mask[33];
 extern int32 autcon_enb;                                /* autoconfig enable */
 extern int32 int_req[IPL_HLVL];                         /* intr, IPL 14-17 */

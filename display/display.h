@@ -47,7 +47,8 @@ enum display_type {
     DIS_VR20 = 20,
     DIS_TYPE30 = 30,
     DIS_VR48 = 48,
-    DIS_TYPE340 = 340
+    DIS_TYPE340 = 340,
+    DIS_NG = 999,
 };
 
 /*
@@ -63,6 +64,11 @@ enum display_type {
  * (but called implicitly by display_point())
  */
 extern int display_init(enum display_type, int scale, void *dptr);
+
+/*
+ * close display
+ */
+extern void display_close(void *dptr);
 
 /* return size of virtual display */
 extern int display_xpoints(void);
@@ -81,6 +87,11 @@ extern int display_scale(void);
  * Under X11 polls for window events!!
  */
 extern int display_age(int,int);
+
+/*
+ * Return true if the display is blank.
+ */
+extern int display_is_blank(void);
 
 /*
  * display intensity levels.

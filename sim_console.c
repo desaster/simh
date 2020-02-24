@@ -182,6 +182,13 @@ int32 sim_del_char = '\b';                              /* delete character */
 #else
 int32 sim_del_char = 0177;
 #endif
+t_bool sim_signaled_int_char                            /* WRU character detected by signal while running */
+#if defined (_WIN32) || defined (_VMS) || defined (__CYGWIN__)
+                             = FALSE;
+#else
+                             = TRUE;
+#endif
+uint32 sim_last_poll_kbd_time;                          /* time when sim_poll_kbd was called */
 extern TMLN *sim_oline;                                 /* global output socket */
 
 static t_stat sim_con_poll_svc (UNIT *uptr);                /* console connection poll routine */
@@ -430,7 +437,7 @@ if (*cptr == 0) {                                       /* show all */
 while (*cptr != 0) {
     cptr = get_glyph (cptr, gbuf, ',');                 /* get modifier */
     if ((shptr = find_shtab (show_con_tab, gbuf)))
-        shptr->action (st, dptr, uptr, shptr->arg, cptr);
+        shptr->action (st, dptr, uptr, shptr->arg, NULL);
     else return SCPE_NOPARAM;
     }
 return SCPE_OK;
@@ -667,7 +674,7 @@ if (c >= 0) {                                           /* poll connect */
     TMLN *lp = rem->lp;
     char wru_name[8];
 
-    sim_activate_after(uptr+1, 1000000);                /* start data poll after 1 second */
+    sim_activate_after(rem_con_data_unit, 1000000);     /* start data poll after 1 second */
     lp->rcve = 1;                                       /* rcv enabled */
     rem->buf_ptr = 0;                                   /* start with empty command buffer */
     rem->single_mode = TRUE;                            /* start in single command mode */
@@ -873,7 +880,7 @@ int line = rem->line;
 
 if ((!sim_oline) && (sim_log)) {
     fflush (sim_log);
-    sim_fseeko (sim_log, sim_rem_cmd_log_start, SEEK_SET);
+    (void)sim_fseeko (sim_log, sim_rem_cmd_log_start, SEEK_SET);
     cbuf[sizeof(cbuf)-1] = '\0';
     while (fgets (cbuf, sizeof(cbuf)-1, sim_log))
         tmxr_linemsgf (lp, "%s", cbuf);
@@ -1412,6 +1419,7 @@ for (i=(was_active_command ? sim_rem_cmd_active_line : 0);
             sim_is_running = FALSE;
             sim_rem_collect_all_registers ();
             sim_stop_timer_services ();
+            sim_flush_buffered_files ();
             if (rem->act == NULL) {
                 for (j=0; j < sim_rem_con_tmxr.lines; j++) {
                     TMLN *lpj = &sim_rem_con_tmxr.ldsc[j];
@@ -1437,6 +1445,7 @@ for (i=(was_active_command ? sim_rem_cmd_active_line : 0);
                     sim_is_running = FALSE;
                     sim_rem_collect_all_registers ();
                     sim_stop_timer_services ();
+                    sim_flush_buffered_files ();
                     stat = SCPE_STOP;
                     _sim_rem_message ("RUN", stat);
                     _sim_rem_log_out (lp);
@@ -2200,13 +2209,14 @@ sim_set_logoff (0, NULL);                               /* close cur log */
 r = sim_open_logfile (gbuf, FALSE, &sim_log, &sim_log_ref); /* open log */
 if (r != SCPE_OK)                                       /* error? */
     return r;
-if (!sim_quiet)
+if ((!sim_quiet) && (!(sim_switches & SWMASK ('Q'))))
     fprintf (stdout, "Logging to file \"%s\"\n", 
              sim_logfile_name (sim_log, sim_log_ref));
 fprintf (sim_log, "Logging to file \"%s\"\n", 
              sim_logfile_name (sim_log, sim_log_ref));  /* start of log */
 time(&now);
-fprintf (sim_log, "Logging to file \"%s\" at %s", sim_logfile_name (sim_log, sim_log_ref), ctime(&now));
+if ((!sim_quiet) && (!(sim_switches & SWMASK ('Q'))))
+    fprintf (sim_log, "Logging to file \"%s\" at %s", sim_logfile_name (sim_log, sim_log_ref), ctime(&now));
 return SCPE_OK;
 }
 
@@ -2218,7 +2228,7 @@ if (cptr && (*cptr != 0))                               /* now eol? */
     return SCPE_2MARG;
 if (sim_log == NULL)                                    /* no log? */
     return SCPE_OK;
-if (!sim_quiet)
+if ((!sim_quiet) && (!(sim_switches & SWMASK ('Q'))))
     fprintf (stdout, "Log file closed\n");
 fprintf (sim_log, "Log file closed\n");
 sim_close_logfile (&sim_log_ref);                       /* close log */
@@ -2238,6 +2248,21 @@ if (sim_log)
 else
     fprintf (st, "Logging disabled\n");
 return SCPE_OK;
+}
+
+/* Set debug switches */
+
+int32 sim_set_deb_switches (int32 switches)
+{
+int32 old_deb_switches = sim_deb_switches;
+
+sim_deb_switches = switches & 
+                   (SWMASK ('R') | SWMASK ('P') | 
+                    SWMASK ('T') | SWMASK ('A') | 
+                    SWMASK ('F') | SWMASK ('N') |
+                    SWMASK ('B') | SWMASK ('E') |
+                    SWMASK ('D') );                 /* save debug switches */
+return old_deb_switches;
 }
 
 /* Set debug routine */
@@ -2265,11 +2290,8 @@ r = sim_open_logfile (gbuf, FALSE, &sim_deb, &sim_deb_ref);
 if (r != SCPE_OK)
     return r;
 
-sim_deb_switches = sim_switches & 
-                   (SWMASK ('R') | SWMASK ('P') | 
-                    SWMASK ('T') | SWMASK ('A') | 
-                    SWMASK ('F') | SWMASK ('N') |
-                    SWMASK ('B'));                  /* save debug switches */
+sim_set_deb_switches (sim_switches);
+
 if (sim_deb_switches & SWMASK ('R')) {
     struct tm loc_tm, gmt_tm;
     time_t time_t_now;
@@ -2820,6 +2842,7 @@ t_stat sim_poll_kbd (void)
 {
 t_stat c;
 
+sim_last_poll_kbd_time = sim_os_msec ();                    /* record when this poll happened */
 if (sim_send_poll_data (&sim_con_send, &c))                 /* injected input characters available? */
     return c;
 if (!sim_rem_master_mode) {
@@ -3374,6 +3397,8 @@ static DWORD saved_output_mode;
          console terminal is a useful character to be passed to the 
          simulator.  This code does nothing to disable or affect that. */
 
+#include <signal.h>
+
 static BOOL WINAPI
 ControlHandler(DWORD dwCtrlType)
     {
@@ -3384,7 +3409,7 @@ ControlHandler(DWORD dwCtrlType)
         {
         case CTRL_BREAK_EVENT:      // Use CTRL-Break or CTRL-C to simulate 
         case CTRL_C_EVENT:          // SERVICE_CONTROL_STOP in debug mode
-            int_handler(0);
+            int_handler(SIGINT);
             return TRUE;
         case CTRL_CLOSE_EVENT:      // Window is Closing
         case CTRL_LOGOFF_EVENT:     // User is logging off
@@ -3392,7 +3417,7 @@ ControlHandler(DWORD dwCtrlType)
                 return TRUE;        // Not our User, so ignore
             /* fall through */
         case CTRL_SHUTDOWN_EVENT:   // System is shutting down
-            int_handler(0);
+            int_handler(SIGTERM);
             return TRUE;
         }
     return FALSE;
@@ -4194,7 +4219,7 @@ static t_stat sim_os_putchar (int32 out)
 char c;
 
 c = out;
-(void)write (1, &c, 1);
+if (write (1, &c, 1)) {};
 return SCPE_OK;
 }
 

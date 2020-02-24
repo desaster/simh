@@ -146,12 +146,8 @@ extern int sim_vax_snprintf(char *buf, size_t buf_size, const char *fmt, ...);
 #ifdef USE_REGEX
 #undef USE_REGEX
 #endif
-#if defined(HAVE_PCREPOSIX_H)
-#include <pcreposix.h>
+#if defined(HAVE_PCRE_H)
 #include <pcre.h>
-#define USE_REGEX 1
-#elif defined(HAVE_REGEX_H)
-#include <regex.h>
 #define USE_REGEX 1
 #endif
 
@@ -326,12 +322,16 @@ typedef uint32          t_addr;
 #define WEAK __attribute__((weak))
 #elif defined(_MSC_VER)
 #define WEAK __declspec(selectany) 
-#else
-#define WEAK extern 
-#endif
-#else
-#define WEAK 
-#endif
+#else   /* !defined(__GNUC__) && !defined(_MSC_VER)  */
+#define WEAK
+#endif  /* __GNUC__ */
+#else   /* !defined(__cplusplus) */
+#if defined(__GNUC__)
+#define WEAK __attribute__((common))
+#else   /* !defined(__GNUC__) */
+#define WEAK
+#endif  /* defined(__GNUC__) */
+#endif  /* defined(__cplusplus) */
 
 /* System independent definitions */
 
@@ -411,13 +411,15 @@ typedef uint32          t_addr;
 #define SCPE_STALL      (SCPE_BASE + 41)                /* Telnet conn stall */
 #define SCPE_AFAIL      (SCPE_BASE + 42)                /* assert failed */
 #define SCPE_INVREM     (SCPE_BASE + 43)                /* invalid remote console command */
-#define SCPE_NOTATT     (SCPE_BASE + 44)                /* not attached */
-#define SCPE_EXPECT     (SCPE_BASE + 45)                /* expect matched */
-#define SCPE_AMBREG     (SCPE_BASE + 46)                /* ambiguous register */
-#define SCPE_REMOTE     (SCPE_BASE + 47)                /* remote console command */
-#define SCPE_INVEXPR    (SCPE_BASE + 48)                /* invalid expression */
+#define SCPE_EXPECT     (SCPE_BASE + 44)                /* expect matched */
+#define SCPE_AMBREG     (SCPE_BASE + 45)                /* ambiguous register */
+#define SCPE_REMOTE     (SCPE_BASE + 46)                /* remote console command */
+#define SCPE_INVEXPR    (SCPE_BASE + 47)                /* invalid expression */
+#define SCPE_SIGTERM    (SCPE_BASE + 48)                /* SIGTERM has been received */
+#define SCPE_FSSIZE     (SCPE_BASE + 49)                /* File System size larger than disk size */
+#define SCPE_RUNTIME    (SCPE_BASE + 50)                /* Run Time Limit Exhausted */
 
-#define SCPE_MAX_ERR    (SCPE_BASE + 48)                /* Maximum SCPE Error Value */
+#define SCPE_MAX_ERR    (SCPE_BASE + 50)                /* Maximum SCPE Error Value */
 #define SCPE_KFLAG      0x10000000                      /* tti data flag */
 #define SCPE_BREAK      0x20000000                      /* tti break flag */
 #define SCPE_NOMESSAGE  0x40000000                      /* message display supression flag */
@@ -592,6 +594,8 @@ struct UNIT {
     uint16              us9;                            /* device specific */
     uint16              us10;                           /* device specific */
     void                *tmxr;                          /* TMXR linkage */
+    uint32              recsize;                        /* Tape specific info */
+    t_addr              tape_eom;                       /* Tape specific info */
     t_bool              (*cancel)(UNIT *);
     double              usecs_remaining;                /* time balance for long delays */
     char                *uname;                         /* Unit name */
@@ -646,13 +650,21 @@ struct UNIT {
 
 /* These flags are only set dynamically */
 
-#define UNIT_ATTMULT    0000001         /* Allow multiple attach commands */
-#define UNIT_TM_POLL    0000002         /* TMXR Polling unit */
-#define UNIT_NO_FIO     0000004         /* fileref is NOT a FILE * */
-#define UNIT_DISK_CHK   0000010         /* disk data debug checking (sim_disk) */
-#define UNIT_TMR_UNIT   0000020         /* Unit registered as a calibrated timer */
-#define UNIT_V_DF_TAPE  6               /* Bit offset for Tape Density reservation */
-#define UNIT_S_DF_TAPE  3               /* Bits Reserved for Tape Density */
+#define UNIT_ATTMULT        0000001         /* Allow multiple attach commands */
+#define UNIT_TM_POLL        0000002         /* TMXR Polling unit */
+#define UNIT_NO_FIO         0000004         /* fileref is NOT a FILE * */
+#define UNIT_DISK_CHK       0000010         /* disk data debug checking (sim_disk) */
+#define UNIT_TMR_UNIT       0000200         /* Unit registered as a calibrated timer */
+#define UNIT_TAPE_MRK       0000400         /* Tape Unit Tapemark */
+#define UNIT_TAPE_PNU       0001000         /* Tape Unit Position Not Updated */
+#define UNIT_V_DF_TAPE      10              /* Bit offset for Tape Density reservation */
+#define UNIT_S_DF_TAPE      3               /* Bits Reserved for Tape Density */
+#define UNIT_V_TAPE_FMT     13              /* Bit offset for Tape Format */
+#define UNIT_S_TAPE_FMT     3               /* Bits Reserved for Tape Format */
+#define UNIT_M_TAPE_FMT     (((1 << UNIT_S_TAPE_FMT) - 1) << UNIT_V_TAPE_FMT)
+#define UNIT_V_TAPE_ANSI    16              /* Bit offset for ANSI Tape Type */
+#define UNIT_S_TAPE_ANSI    4               /* Bits Reserved for ANSI Tape Type */
+#define UNIT_M_TAPE_ANSI    (((1 << UNIT_S_TAPE_ANSI) - 1) << UNIT_V_TAPE_ANSI)
 
 struct BITFIELD {
     const char      *name;                              /* field name */
@@ -738,8 +750,8 @@ struct MTAB {
     t_stat              (*disp)(FILE *st, UNIT *up, int32 v, CONST void *dp);
                                                         /* display routine */
     void                *desc;                          /* value descriptor */
-                                                        /* REG * if MTAB_VAL */
-                                                        /* int * if not */
+                                                        /* pointer to something needed by */
+                                                        /* the validation and/or display routines */
     const char          *help;                          /* help string */
     };
 
@@ -807,7 +819,8 @@ struct EXPTAB {
 #define EXP_TYP_REGEX_I         (SWMASK ('I'))      /* regular expression pattern matching should be case independent */
 #define EXP_TYP_TIME            (SWMASK ('T'))      /* halt delay is in microseconds instead of instructions */
 #if defined(USE_REGEX)
-    regex_t             regex;                          /* compiled regular expression */
+    pcre                *regex;                         /* compiled regular expression */
+    int                 re_nsub;                        /* regular expression sub expression count */
 #endif
     char                *act;                           /* action string */
     };
@@ -1077,7 +1090,11 @@ extern int32 sim_asynch_latency;
 extern int32 sim_asynch_inst_latency;
 
 /* Thread local storage */
-#if defined(__GNUC__) && !defined(__APPLE__) && !defined(__hpux) && !defined(__OpenBSD__) && !defined(_AIX)
+#if defined(thread_local)
+#define AIO_TLS thread_local
+#elif (__STDC_VERSION__ >= 201112) && !(defined(__STDC_NO_THREADS__))
+#define AIO_TLS _Thread_local
+#elif defined(__GNUC__) && !defined(__APPLE__) && !defined(__hpux) && !defined(__OpenBSD__) && !defined(_AIX)
 #define AIO_TLS __thread
 #elif defined(_MSC_VER)
 #define AIO_TLS __declspec(thread)
@@ -1163,14 +1180,11 @@ extern int32 sim_asynch_inst_latency;
 #define AIO_QUEUE_MODE "Lock free asynchronous event queue"
 #define AIO_INIT                                                  \
     do {                                                          \
-      int tmr;                                                    \
       sim_asynch_main_threadid = pthread_self();                  \
       /* Empty list/list end uses the point value (void *)1.      \
          This allows NULL in an entry's a_next pointer to         \
          indicate that the entry is not currently in any list */  \
       sim_asynch_queue = QUEUE_LIST_END;                          \
-      for (tmr=0; tmr<SIM_NTIMERS; tmr++)                         \
-          sim_clock_cosched_queue[tmr] = QUEUE_LIST_END;          \
       } while (0)
 #define AIO_CLEANUP                                               \
     do {                                                          \
@@ -1206,7 +1220,6 @@ extern int32 sim_asynch_inst_latency;
 #define AIO_QUEUE_MODE "Lock based asynchronous event queue"
 #define AIO_INIT                                                  \
     do {                                                          \
-      int tmr;                                                    \
       pthread_mutexattr_t attr;                                   \
                                                                   \
       pthread_mutexattr_init (&attr);                             \
@@ -1218,8 +1231,6 @@ extern int32 sim_asynch_inst_latency;
          This allows NULL in an entry's a_next pointer to         \
          indicate that the entry is not currently in any list */  \
       sim_asynch_queue = QUEUE_LIST_END;                          \
-      for (tmr=0; tmr<SIM_NTIMERS; tmr++)                         \
-          sim_clock_cosched_queue[tmr] = QUEUE_LIST_END;          \
       } while (0)
 #define AIO_CLEANUP                                               \
     do {                                                          \
@@ -1248,7 +1259,11 @@ extern int32 sim_asynch_inst_latency;
         sim_asynch_queue = uptr;                                       \
       }                                                                \
       if (sim_idle_wait) {                                             \
-        sim_debug (TIMER_DBG_IDLE, &sim_timer_dev, "waking due to event on %s after %d instructions\n", sim_uname(uptr), event_time);\
+        if (sim_deb) {  /* only while debug do lock/unlock overhead */ \
+          AIO_UNLOCK;                                                  \
+          sim_debug (TIMER_DBG_IDLE, &sim_timer_dev, "waking due to event on %s after %d instructions\n", sim_uname(uptr), event_time);\
+          AIO_LOCK;                                                    \
+          }                                                            \
         pthread_cond_signal (&sim_asynch_wake);                        \
         }                                                              \
       AIO_UNLOCK;                                                      \

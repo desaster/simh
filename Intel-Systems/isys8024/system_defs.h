@@ -52,12 +52,13 @@
 
 /* set the base and size for the EPROM on the iSBC 80/10 */
 #define ROM_BASE        0x0000
-#define ROM_SIZE        0x1000
+#define ROM_SIZE        0x0FFF
 #define ROM_DISABLE     1
+#define EPROM_NUM       1
 
 /* set the base and size for the RAM on the iSBC 80/10 */
 #define RAM_BASE        0xF000
-#define RAM_SIZE        0x1000 
+#define RAM_SIZE        0x0FFF 
 #define RAM_DISABLE     0
 
 /* set INTR for CPU on the iSBC 80/10 */
@@ -74,20 +75,38 @@
 #define SBC202_INT      INT_1
 #define SBC202_NUM      1
 
+/* set the base I/O address for the iSBC 206 */
+#define SBC206_BASE     0x68
+#define SBC206_INT      INT_2
+#define SBC206_NUM      0
+
 /* set the base for the zx-200a disk controller */
 #define ZX200A_BASE     0x78
 #define ZX200A_INT      INT_1
 #define ZX200A_NUM      0
 
+/* set the base I/O address for the iSBX 218 */
+#define SBC208_BASE     0x40
+#define SBC208_INT      INT_1
+#define SBC208_NUM      0
+#define I8272_BASE      0xF0
+#define I8272_NUM       1
+#define I8272_INT       INT_1
+
 /* set the base I/O address for the iSBC 208 */
-#define SBC208_BASE 0x40
+#define SBC208_BASE     0x40
 #define SBC208_INT      INT_1
 #define SBC208_NUM      0
 
 /* set the base and size for the iSBC 064 */
 #define SBC064_BASE     0x0000
-#define SBC064_SIZE     0x10000
+#define SBC064_SIZE     0xFFFF
 #define SBC064_NUM      1
+
+/* set the base and size for the iSBC 464 ROM */
+#define SBC464_BASE     0xA800
+#define SBC464_SIZE     0x47FF
+#define SBC464_NUM      0
 
 /* multibus interrupt definitions */
 
@@ -109,10 +128,10 @@
 
 /* Memory */
 
-#define MAXMEMSIZE      0x10000         /* 8080 max memory size */
-#define MEMSIZE         (i8080_unit.capac)  /* 8080 actual memory size */
-#define ADDRMASK        (MAXMEMSIZE - 1)    /* 8080 address mask */
-#define MEM_ADDR_OK(x)      (((uint32) (x)) < MEMSIZE)
+#define MAXMEMSIZE          0x0FFFF             /* 8080 max memory size */
+#define MEMSIZE             (i8080_unit.capac)  /* 8080 actual memory size */
+#define ADDRMASK            (MAXMEMSIZE)        /* 8080 address mask */
+#define MEM_ADDR_OK(x)      (((uint16) (x)) <= MEMSIZE)
 
 /* debug definitions */
 

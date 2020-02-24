@@ -170,19 +170,82 @@ static DEBTAB cpu_deb_tab[] = {
     { "INIT",       INIT_MSG,       "Initialization"        },
     { "IRQ",        IRQ_MSG,        "Interrupt Handling"    },
     { "IO",         IO_DBG,         "I/O Dispatch"          },
+    { "CIO",        CIO_DBG,        "Common I/O Interface"  },
     { "TRACE",      TRACE_DBG,      "Call Trace"            },
     { "ERROR",      ERR_MSG,        "Error"                 },
-    { NULL,         0                                       }
+    { NULL,         0,              NULL                    }
 };
 
 UNIT cpu_unit = { UDATA (NULL, UNIT_FIX|UNIT_BINK|UNIT_IDLE, MAXMEMSIZE) };
 
-#define UNIT_V_EXHALT   (UNIT_V_UF + 0)                 /* halt to console */
-#define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
+/*
+ * The following commands deposit a small calibration program into
+ * mainstore at 0x2000000 and then set the program counter to the
+ * start address. Simulator calibration will execute this program to
+ * establish a baseline execution rate.
+ *
+ * Program:
+ *   84 01 46        MOVW    &0x1,%r6
+ *   84 46 47        MOVW    %r6,%r7
+ *   84 47 48        MOVW    %r7,%r8
+ *   90 48           INCW    %r8
+ *   28 48           TSTW    %r8
+ *   4f 0b           BLEB    0xb
+ *   e4 07 48 40     MODW3   &0x7,%r8,%r0
+ *   84 40 47        MOVW    %r0,%r7
+ *   7b 0b           BRB     0xb
+ *   8c 48 40        MNEGW   %r8,%r0
+ *   a4 07 40        MODW2   &0x7,%r0
+ *   84 40 47        MOVW    %r0,%r7
+ *   e8 47 48 40     MULW3   %r7,%r8,%r0
+ *   9c 07 40        ADDW2   &0x7,%r0
+ *   84 40 46        MOVW    %r0,%r6
+ *   28 48           TSTW    %r8
+ *   4f 05           BLEB    0x5
+ *   a8 03 47        MULW2   &0x3,%r7
+ *   d0 01 46 46     LLSW3   &0x1,%r6,%r6
+ *   28 46           TSTW    %r6
+ *   4f 09           BLEB    0x9
+ *   ec 46 47 40     DIVW3   %r6,%r7,%r0
+ *   84 40 48        MOVW    %r0,%r8
+ *   d4 01 47 47     LRSW3   &0x1,%r7,%r7
+ *   3c 48 47        CMPW    %r8,%r7
+ *   4f 05           BLEB    0x5
+ *   bc 48 47        SUBW2   %r8,%r7
+ *   7b bc           BRB     -0x44
+ */
+static const char *att3b2_clock_precalibrate_commands[] = {
+    "-v 2000000 84014684",
+    "-v 2000004 46478447",
+    "-v 2000008 48904828",
+    "-v 200000c 484f0be4",
+    "-v 2000010 07484084",
+    "-v 2000014 40477b0b",
+    "-v 2000018 8c4840a4",
+    "-v 200001c 07408440",
+    "-v 2000020 47e84748",
+    "-v 2000024 409c0740",
+    "-v 2000028 84404628",
+    "-v 200002c 484f05a8",
+    "-v 2000030 0347d001",
+    "-v 2000034 46462846",
+    "-v 2000038 4f09ec46",
+    "-v 200003c 47408440",
+    "-v 2000040 48d40147",
+    "-v 2000044 473c4847",
+    "-v 2000048 4f05bc48",
+    "-v 200004c 477bbc00",
+    "PC 2000000",
+    NULL
+};
 
+/*
+ * TODO: This works fine for now, but the moment we want to emulate
+ * SCSI (0x0100) or EPORTS (0x0102) we're in trouble!
+ */
 const char *cio_names[8] = {
-    "", "*VOID*", "*VOID*", "PORTS",
-    "*VOID*", "CTC", "*VOID*", "*VOID*"
+    "", "SBD", "NI", "PORTS",
+    "*VOID*", "CTC", "NAU", "*VOID*"
 };
 
 MTAB cpu_mod[] = {
@@ -231,7 +294,11 @@ DEVICE cpu_dev = {
     0,                   /* Debug control flags */
     cpu_deb_tab,         /* Debug flag names */
     &cpu_set_size,       /* Memory size change */
-    NULL                 /* Logical names */
+    NULL,                /* Logical names */
+    NULL,                /* Help routine */
+    NULL,                /* Attach Help Routine */
+    NULL,                /* Help Context */
+    &cpu_description     /* Device Description */
 };
 
 #define HWORD_OP_COUNT 11
@@ -254,12 +321,12 @@ mnemonic hword_ops[HWORD_OP_COUNT] = {
 mnemonic ops[256] = {
     {0x00,  0, OP_NONE, NA, "halt",   -1, -1, -1, -1},
     {0x01, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x02,  2, OP_COPR, WD, "SPOPRD", -1, -1, -1, -1},
-    {0x03,  3, OP_COPR, WD, "SPOPD2", -1, -1, -1, -1},
+    {0x02,  2, OP_COPR, WD, "SPOPRD",  1, -1, -1, -1},
+    {0x03,  3, OP_COPR, WD, "SPOPD2",  1, -1, -1,  2},
     {0x04,  2, OP_DESC, WD, "MOVAW",   0, -1, -1,  1},
     {0x05, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x06,  2, OP_COPR, WD, "SPOPRT", -1, -1, -1, -1},
-    {0x07,  3, OP_COPR, WD, "SPOPT2", -1, -1, -1, -1},
+    {0x06,  2, OP_COPR, WD, "SPOPRT",  1, -1, -1, -1},
+    {0x07,  3, OP_COPR, WD, "SPOPT2",  1, -1, -1,  2},
     {0x08,  0, OP_NONE, NA, "RET",    -1, -1, -1, -1},
     {0x09, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x0a, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
@@ -271,11 +338,11 @@ mnemonic ops[256] = {
     {0x10,  1, OP_DESC, WD, "SAVE",    0, -1, -1, -1},
     {0x11, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x12, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x13,  2, OP_COPR, WD, "SPOPWD", -1, -1, -1, -1},
+    {0x13,  2, OP_COPR, WD, "SPOPWD", -1, -1, -1,  1},
     {0x14,  1, OP_BYTE, NA, "EXTOP",  -1, -1, -1, -1},
     {0x15, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x16, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x17,  2, OP_COPR, WD, "SPOPWT", -1, -1, -1, -1},
+    {0x17,  2, OP_COPR, WD, "SPOPWT", -1, -1, -1,  1},
     {0x18,  1, OP_DESC, WD, "RESTORE", 0, -1, -1, -1},
     {0x19, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x1a, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
@@ -286,8 +353,8 @@ mnemonic ops[256] = {
     {0x1f,  1, OP_DESC, BT, "SWAPBI", -1, -1, -1,  0}, /* 3-122 252 */
     {0x20,  1, OP_DESC, WD, "POPW",   -1, -1, -1,  0},
     {0x21, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
-    {0x22,  2, OP_COPR, WD, "SPOPRS", -1, -1, -1, -1},
-    {0x23,  3, OP_COPR, WD, "SPOPS2", -1, -1, -1, -1},
+    {0x22,  2, OP_COPR, WD, "SPOPRS",  1, -1, -1, -1},
+    {0x23,  3, OP_COPR, WD, "SPOPS2",  1, -1, -1,  2},
     {0x24,  1, OP_DESC, NA, "JMP",    -1, -1, -1,  0},
     {0x25, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x26, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
@@ -303,7 +370,7 @@ mnemonic ops[256] = {
     {0x30, -1, OP_NONE, NA, "???",    -1, -1, -1, -1}, /* Two-byte instructions */
     {0x31, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x32,  1, OP_COPR, WD, "SPOP",   -1, -1, -1, -1},
-    {0x33,  2, OP_COPR, WD, "SPOPWS", -1, -1, -1, -1},
+    {0x33,  2, OP_COPR, WD, "SPOPWS", -1, -1, -1,  1},
     {0x34,  1, OP_DESC, WD, "JSB",    -1, -1, -1,  0},
     {0x35, -1, OP_NONE, NA, "???",    -1, -1, -1, -1},
     {0x36,  1, OP_HALF, NA, "BSBH",   -1, -1, -1,  0},
@@ -714,6 +781,9 @@ t_stat cpu_reset(DEVICE *dptr)
     /* Link in our special "boot" command so we can boot with both
      * "BO{OT}" and "BO{OT} CPU" */
     sim_vm_cmd = sys_cmd;
+
+    /* Set up the pre-calibration routine */
+    sim_clock_precalibrate_commands = att3b2_clock_precalibrate_commands;
 
     if (!sim_is_running) {
         /* Clear registers */
@@ -1704,6 +1774,9 @@ t_stat sim_instr(void)
     /* Generic index */
     uint32   i;
 
+    /* Used by oprocessor instructions */
+    uint32   coprocessor_word;
+
     operand *src1, *src2, *src3, *dst;
 
     stop_reason = 0;
@@ -1788,6 +1861,8 @@ t_stat sim_instr(void)
             cpu_exception_stack_depth--;
         }
 
+        AIO_CHECK_EVENT;
+
         if (sim_interval-- <= 0) {
             if ((stop_reason = sim_process_event())) {
                 break;
@@ -1821,9 +1896,9 @@ t_stat sim_instr(void)
                 if (cio[i].intr &&
                     cio[i].ipl == cpu_int_ipl &&
                     cio[i].ivec == cpu_int_vec) {
-                    sim_debug(IO_DBG, &cpu_dev,
-                              "[%08x] [IRQ] Handling CIO interrupt for card %d\n",
-                              R[NUM_PC], i);
+                    sim_debug(CIO_DBG, &cpu_dev,
+                              "[%08x] [IRQ] Handling CIO interrupt for card %d ivec=%02x\n",
+                              R[NUM_PC], i, cpu_int_vec);
 
                     cio[i].intr = FALSE;
                 }
@@ -1862,6 +1937,11 @@ t_stat sim_instr(void)
         /*
          * Operate on the decoded instruction.
          */
+
+        /* Special case for coprocessor instructions */
+        if (cpu_instr->mn->mode == OP_COPR) {
+            coprocessor_word = cpu_instr->operands[0].embedded.w;
+        }
 
         /* Get the operands */
         if (cpu_instr->mn->src_op1 >= 0) {
@@ -2049,6 +2129,11 @@ t_stat sim_instr(void)
             break;
         case BRB:
             pc_incr = sign_extend_b(dst->embedded.b);
+            /* BRB is commonly used to halt the processor in a tight
+             * infinite loop. */
+            if (pc_incr == 0) {
+                stop_reason = STOP_LOOP;
+            }
             break;
         case BSBH:
             cpu_push_word(R[NUM_PC] + pc_incr);
@@ -2135,30 +2220,31 @@ t_stat sim_instr(void)
             cpu_set_v_flag(0);
             break;
         case CMPW:
-            a = cpu_read_op(src1);
-            b = cpu_read_op(src2);
-
-            cpu_set_z_flag((uint32)b == (uint32)a);
-            cpu_set_n_flag((int32)b < (int32)a);
-            cpu_set_c_flag((uint32)b < (uint32)a);
-            cpu_set_v_flag(0);
-            break;
         case CMPH:
-            a = cpu_read_op(src1);
-            b = cpu_read_op(src2);
-
-            cpu_set_z_flag((uint16)b == (uint16)a);
-            cpu_set_n_flag((int16)b < (int16)a);
-            cpu_set_c_flag((uint16)b < (uint16)a);
-            cpu_set_v_flag(0);
-            break;
         case CMPB:
             a = cpu_read_op(src1);
             b = cpu_read_op(src2);
 
-            cpu_set_z_flag((uint8)b == (uint8)a);
-            cpu_set_n_flag((int8)b < (int8)a);
-            cpu_set_c_flag((uint8)b < (uint8)a);
+            switch(op_type(src2)) {
+            case WD:
+            case UW:
+                cpu_set_n_flag((int32)b < (int32)a);
+                break;
+            case HW:
+            case UH:
+                cpu_set_n_flag((int16)b < (int16)a);
+                break;
+            case BT:
+            case SB:
+                cpu_set_n_flag((int8)b < (int8)a);
+                break;
+            default:
+                /* Unreachable */
+                break;
+            }
+
+            cpu_set_z_flag(b == a);
+            cpu_set_c_flag(b < a);
             cpu_set_v_flag(0);
             break;
         case DECW:
@@ -2476,7 +2562,7 @@ t_stat sim_instr(void)
             }
             break;
         case STREND:
-            while (read_b(R[0], ACC_AF) != 0) {
+            while (read_b(R[0], ACC_AF) != '\0') {
                 R[0]++;
             }
             break;
@@ -2829,18 +2915,36 @@ t_stat sim_instr(void)
             pc_incr = 0;
             break;
         case SPOP:
+            /* Memory fault is signaled when no support processor is
+               active */
+            if (mau_broadcast(coprocessor_word, 0, 0) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
+            break;
         case SPOPD2:
         case SPOPS2:
         case SPOPT2:
+            a = cpu_effective_address(src1);
+            b = cpu_effective_address(dst);
+            if (mau_broadcast(coprocessor_word, a, b) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
+            break;
         case SPOPRD:
         case SPOPRS:
         case SPOPRT:
+            a = cpu_effective_address(src1);
+            if (mau_broadcast(coprocessor_word, a, 0) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
+            break;
         case SPOPWD:
         case SPOPWS:
         case SPOPWT:
-            /* Memory fault is signaled when no support processor is
-               active */
-            cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            a = cpu_effective_address(dst);
+            if (mau_broadcast(coprocessor_word, 0, a) != SCPE_OK) {
+                cpu_abort(NORMAL_EXCEPTION, EXTERNAL_MEMORY_FAULT);
+            }
             break;
         case SUBW2:
         case SUBH2:
@@ -2917,15 +3021,19 @@ t_stat sim_instr(void)
             R[NUM_FP] = R[NUM_SP];
             break;
         case STRCPY:
-            a = 0;
-            b = 0;
-
-            do {
-                b = read_b(R[0] + a, ACC_AF);
-                write_b(R[1] + a, (uint8) b);
-                a++;
-            } while (b != '\0');
-
+            /* The STRCPY instruction will always copy the NULL
+             * terminator of a string. However, copying the NULL
+             * terminator never increments the source or destination
+             * pointer! */
+            while (1) {
+                a = read_b(R[0], ACC_AF);
+                write_b(R[1], (uint8) a);
+                if (a == '\0') {
+                    break;
+                }
+                R[0]++;
+                R[1]++;
+            }
             break;
         case TSTW:
             a = cpu_read_op(src1);
@@ -3450,7 +3558,7 @@ static void cpu_calc_ints()
         cpu_int_ipl = cpu_int_vec = CPU_ID_IF_IPL;
     } else if ((csr_data & CSRUART) || (csr_data & CSRDMA)) {
         cpu_int_ipl = cpu_int_vec = CPU_IU_DMA_IPL;
-    } else if (csr_data & CSRCLK) {
+    } else if ((csr_data & CSRCLK) || (csr_data & CSRTIMO)) {
         cpu_int_ipl = cpu_int_vec = CPU_TMR_IPL;
     } else {
         cpu_int_ipl = cpu_int_vec = 0;
@@ -3654,19 +3762,29 @@ static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst)
 
     switch(op_type(dst)) {
     case WD:
+        cpu_set_c_flag(result > WORD_MASK);
+        cpu_set_v_flag(((a ^ ~b) & (a ^ result)) & WD_MSB);
+        break;
     case UW:
         cpu_set_c_flag(result > WORD_MASK);
-        cpu_set_v_flag(!! (((a ^ ~b) & (a ^ result)) & WD_MSB));
+        cpu_set_v_flag(result > WORD_MASK);
         break;
     case HW:
-    case UH:
         cpu_set_c_flag(result > HALF_MASK);
         cpu_set_v_flag(((a ^ ~b) & (a ^ result)) & HW_MSB);
         break;
+    case UH:
+        cpu_set_c_flag(result > HALF_MASK);
+        cpu_set_v_flag(result > HALF_MASK);
+        break;
     case BT:
+        cpu_set_c_flag(result > BYTE_MASK);
+        cpu_set_v_flag(result > BYTE_MASK);
+        break;
     case SB:
         cpu_set_c_flag(result > BYTE_MASK);
         cpu_set_v_flag(((a ^ ~b) & (a ^ result)) & BT_MSB);
+        break;
     }
 }
 
@@ -3677,20 +3795,19 @@ static SIM_INLINE void add(t_uint64 a, t_uint64 b, operand *dst)
 void cpu_abort(uint8 et, uint8 isc)
 {
     /* We don't trap Integer Overflow if the OE bit is not set */
-    if ((R[NUM_PSW] & PSW_OE_MASK) || isc != INTEGER_OVERFLOW) {
-        R[NUM_PSW] &= ~(PSW_ET_MASK);  /* Clear ET  */
-        R[NUM_PSW] &= ~(PSW_ISC_MASK); /* Clear ISC */
-        R[NUM_PSW] |= et;                         /* Set ET    */
-        R[NUM_PSW] |= (uint32) (isc << PSW_ISC);  /* Set ISC   */
-
-        /* TODO: We no longer use ABORT_TRAP or ABORT_EXC, so
-         * it would be nice to clean this up. */
-        if (et == 3 && (isc == BREAKPOINT_TRAP ||
-                        isc == INTEGER_OVERFLOW ||
-                        isc == TRACE_TRAP)) {
-            longjmp(save_env, ABORT_TRAP);
-        } else {
-            longjmp(save_env, ABORT_EXC);
-        }
+    if ((R[NUM_PSW] & PSW_OE_MASK) == 0 && isc == INTEGER_OVERFLOW) {
+        return;
     }
+
+    R[NUM_PSW] &= ~(PSW_ET_MASK);  /* Clear ET  */
+    R[NUM_PSW] &= ~(PSW_ISC_MASK); /* Clear ISC */
+    R[NUM_PSW] |= et;                         /* Set ET    */
+    R[NUM_PSW] |= (uint32) (isc << PSW_ISC);  /* Set ISC   */
+
+    longjmp(save_env, ABORT_EXC);
+}
+
+CONST char *cpu_description(DEVICE *dptr)
+{
+    return "WE32100";
 }

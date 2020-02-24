@@ -81,6 +81,7 @@ t_stat sim_set_serial (int32 flag, CONST char *cptr);
 t_stat sim_set_noserial (int32 flag, CONST char *cptr);
 t_stat sim_set_logon (int32 flag, CONST char *cptr);
 t_stat sim_set_logoff (int32 flag, CONST char *cptr);
+int32 sim_set_deb_switches (int32 switches);
 t_stat sim_set_debon (int32 flag, CONST char *cptr);
 t_stat sim_set_cons_debug (int32 flg, CONST char *cptr);
 t_stat sim_set_cons_buff (int32 flg, CONST char *cptr);
@@ -126,12 +127,14 @@ int32 sim_tt_outcvt (int32 c, uint32 mode);
 t_stat sim_tt_settabs (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat sim_tt_showtabs (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 
-extern int32 sim_rem_cmd_active_line;                       /* command in progress on line # */
+extern int32 sim_rem_cmd_active_line;   /* command in progress on line # */
 
-extern int32 sim_int_char;                                  /* interrupt character */
-extern int32 sim_brk_char;                                  /* break character */
-extern int32 sim_tt_pchar;                                  /* printable character mask */
-extern int32 sim_del_char;                                  /* delete character */
+extern int32 sim_int_char;              /* interrupt character */
+extern int32 sim_brk_char;              /* break character */
+extern int32 sim_tt_pchar;              /* printable character mask */
+extern int32 sim_del_char;              /* delete character */
+extern t_bool sim_signaled_int_char;    /* WRU character detected by signal while running  */
+extern uint32 sim_last_poll_kbd_time;   /* time when sim_poll_kbd was called */
 
 #ifdef  __cplusplus
 }

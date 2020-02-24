@@ -528,9 +528,6 @@ BITFIELD *rp_reg_bits[] = {
 #define RP07_DEV        020042
 #define RP07_SIZE       (RP07_SECT * RP07_SURF * RP07_CYL * RP_NUMWD)
 
-#define RP_CTRL         0
-#define RM_CTRL         1
-
 struct drvtyp {
     int32       sect;                                   /* sectors */
     int32       surf;                                   /* surfaces */
@@ -1378,11 +1375,12 @@ t_stat rp_attach (UNIT *uptr, CONST char *cptr)
 int32 drv, i, p;
 t_stat r;
 DEVICE *dptr = find_dev_from_unit (uptr);
+static const char *drives[] = {"RM03", "RP04", "RM80", "RP06", "RM05", "RP07", NULL};
 
 uptr->capac = drv_tab[GET_DTYPE (uptr->flags)].size;
-r = sim_disk_attach (uptr, cptr, RP_NUMWD * sizeof (uint16), 
-                     sizeof (uint16), TRUE, 0, 
-                     drv_tab[GET_DTYPE (uptr->flags)].name, drv_tab[GET_DTYPE (uptr->flags)].sect, 0);
+r = sim_disk_attach_ex (uptr, cptr, RP_NUMWD * sizeof (uint16), 
+                        sizeof (uint16), TRUE, 0, 
+                        drv_tab[GET_DTYPE (uptr->flags)].name, drv_tab[GET_DTYPE (uptr->flags)].sect, 0, (uptr->flags & UNIT_AUTO) ? drives : NULL);
 if (r != SCPE_OK)                                       /* error? */
     return r;
 drv = (int32) (uptr - dptr->units);                     /* get drv number */

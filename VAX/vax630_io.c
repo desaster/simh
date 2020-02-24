@@ -74,9 +74,13 @@ int32 qb_map[QBNMAPR] = { 0 };                          /* map registers */
 int32 autcon_enb = 1;                                   /* autoconfig enable */
 
 extern int32 ka_mser;                                   /* KA630 mem sys err */
+extern int32 sys_model;
+extern uint32 va_addr;                                  /* QDSS (VCB02) Qbus Memory Offset */
 
 t_stat dbl_rd (int32 *data, int32 addr, int32 access);
 t_stat dbl_wr (int32 data, int32 addr, int32 access);
+t_stat qbmem_rd (int32 *dat, int32 pa, int32 md);
+t_stat qbmem_wr (int32 dat, int32 pa, int32 md);
 int32 eval_int (void);
 t_stat qba_reset (DEVICE *dptr);
 t_stat qba_ex (t_value *vptr, t_addr exta, UNIT *uptr, int32 sw);
@@ -89,6 +93,11 @@ t_stat show_iospace (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat qba_show_virt (FILE *of, UNIT *uptr, int32 val, CONST void *desc);
 t_stat qba_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 const char *qba_description (DEVICE *dptr);
+
+extern int32 va_mem_rd (int32 pa);
+extern void va_mem_wr (int32 pa, int32 val, int32 lnt);
+extern int32 vc_mem_rd (int32 pa);
+extern void vc_mem_wr (int32 pa, int32 val, int32 lnt);
 
 /* Qbus adapter data structures
 
@@ -161,7 +170,7 @@ int32 (*int_ack[IPL_HLVL][32])(void);                   /* int ack routines */
 
 int32 int_vec[IPL_HLVL][32];                            /* int req to vector */
 
-/* The KA620/KA630 handles errors in I/O space as follows
+/* The KA620/KA630 handles errors on the Qbus or I/O space as follows
 
         - read: machine check
         - write: machine check (?)
@@ -171,6 +180,10 @@ int32 ReadQb (uint32 pa)
 {
 int32 idx, val;
 
+if (ADDR_IS_QBM (pa)) {                                /* Qbus memory? */
+    qbmem_rd (&val, pa, READ);
+    return val;
+    }  
 idx = (pa & IOPAGEMASK) >> 1;
 if (iodispR[idx]) {
     iodispR[idx] (&val, pa, READ);
@@ -184,6 +197,10 @@ void WriteQb (uint32 pa, int32 val, int32 mode)
 {
 int32 idx;
 
+if (ADDR_IS_QBM (pa)) {                                /* Qbus memory? */
+    qbmem_wr (val, pa, mode);
+    return;
+    }
 idx = (pa & IOPAGEMASK) >> 1;
 if (iodispW[idx]) {
     iodispW[idx] (val, pa, mode);
@@ -425,7 +442,7 @@ return SCPE_OK;
    Write error: machine check?
 */
 
-int32 qbmap_rd (int32 pa)
+int32 qbmap_rd (int32 pa, int32 lnt)
 {
 int32 idx = ((pa - QBMAPBASE) >> 2);
 
@@ -452,37 +469,84 @@ return;
 
 /* Qbus memory read and write (reflects to main memory)
 
-   May give master or slave error, depending on where the failure occurs
+   Qbus memory is modeled like any other Qbus peripheral.
+   On read, it returns 16b, right justified.
+   On write, it handles either 16b or 8b writes.
+
+   Qbus memory may reflect to main memory or may be locally
+   implemented for graphics cards. If reflected to main memory,
+   the normal ReadW, WriteB, and WriteW routines cannot be used,
+   as that could create a recursive loop.
 */
 
-int32 qbmem_rd (int32 pa)
+t_stat qbmem_rd (int32 *dat, int32 pa, int32 md)
 {
 int32 qa = pa & QBMAMASK;                               /* Qbus addr */
 uint32 ma;
 
-if (qba_map_addr (qa, &ma)) {                           /* map addr */
-    return M[ma >> 2];
-}
+if (qba_map_addr (qa, &ma)) {                           /* in map? */
+    if (ADDR_IS_MEM (ma)) {                             /* real memory? */
+        *dat = (M[ma >> 2] >> ((pa & 2) ? 16 : 0)) & WMASK;
+        return SCPE_OK;                                 /* return word */
+        }                                               /* end if mem */
+    MACH_CHECK (MCHK_READ);                             /* mcheck */
+    }
+#if !defined(VAX_620)
+if (sys_model == 1) {                                   /* VAXstation II? */
+    if (ADDR_IS_QVM (pa)) {                             /* QVSS memory? */
+        *dat = vc_mem_rd (pa);
+        return SCPE_OK;
+        }
+    }
+else if (sys_model == 2) {                              /* VAXstation II/GPX? */
+    if (ADDR_IS_QDM (pa)) {                             /* QDSS memory? */
+        *dat = va_mem_rd (pa);
+        return SCPE_OK;
+        }
+    }
+#endif
 MACH_CHECK (MCHK_READ);                                 /* err? mcheck */
 return 0;
 }
 
-void qbmem_wr (int32 pa, int32 val, int32 lnt)
+t_stat qbmem_wr (int32 dat, int32 pa, int32 md)
 {
 int32 qa = pa & QBMAMASK;                               /* Qbus addr */
 uint32 ma;
 
-if (qba_map_addr (qa, &ma)) {                           /* map addr */
-    if (lnt < L_LONG) {
-        int32 sc = (pa & 3) << 3;
-        int32 mask = (lnt == L_WORD)? 0xFFFF: 0xFF;
-        int32 t = M[ma >> 2];
-        val = ((val & mask) << sc) | (t & ~(mask << sc));
+if (qba_map_addr (qa, &ma)) {                           /* in map? */
+    if (ADDR_IS_MEM (ma)) {                             /* real memory? */
+        if (md == WRITE) {                              /* word access? */
+            int32 sc = (ma & 2) << 3;                   /* aligned only */
+            M[ma >> 2] = (M[ma >> 2] & ~(WMASK << sc)) |
+                ((dat & WMASK) << sc);
+            }
+        else {                                          /* byte access */
+            int32 sc = (ma & 3) << 3;
+            M[ma >> 2] = (M[ma >> 2] & ~(BMASK << sc)) |
+                ((dat & BMASK) << sc);
+            }
+        }                                               /* end if mem */
+    else
+        mem_err = 1;
+    return SCPE_OK;
+    }                                                   /* end if mapped */
+#if !defined(VAX_620)
+if (sys_model == 1) {                                   /* VAXstation II? */
+    if (ADDR_IS_QVM (pa)) {                             /* QVSS memory? */
+        vc_mem_wr (pa, dat, md);
+        return SCPE_OK;
         }
-    M[ma >> 2] = val;
     }
-else mem_err = 1;
-return;
+else if (sys_model == 2) {                              /* VAXstation II/GPX? */
+    if (ADDR_IS_QDM (pa)) {                             /* QDSS memory? */
+        va_mem_wr (pa, dat, md);
+        return SCPE_OK;
+        }
+    }
+#endif
+mem_err = 1;
+return SCPE_OK;
 }
 
 /* Map an address via the translation map */

@@ -1,6 +1,6 @@
 /* vax_cpu.c: VAX CPU
 
-   Copyright (c) 1998-2017, Robert M Supnik
+   Copyright (c) 1998-2019, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,8 @@
 
    cpu          VAX central processor
 
+   23-Apr-19    RMS     Added hook for unpredictable indexed immediate .aw
+   14-Apr-19    RMS     Added hook for non-standard MxPR CC's
    31-Mar-17    RMS     Fixed uninitialized variable on FPD path (COVERITY)
    13-Mar-17    RMS     Fixed dangling else in show_opnd (COVERITY)
    20-Sep-11    MP      Fixed idle conditions for various versions of Ultrix, 
@@ -257,8 +259,10 @@ int32 mem_err = 0;
 int32 crd_err = 0;
 int32 p1 = 0, p2 = 0;                                   /* fault parameters */
 int32 fault_PC;                                         /* fault PC */
+int32 mxpr_cc_vc = 0;                                   /* MxPR V,C bits */
 int32 pcq_p = 0;                                        /* PC queue ptr */
 int32 badabo = 0;
+int32 cpu_instruction_set = CPU_INSTRUCTION_SET;        /* Instruction Groups  */
 int32 cpu_astop = 0;
 int32 mchk_va, mchk_ref;                                /* mem ref param */
 int32 ibufl, ibufh;                                     /* prefetch buf */
@@ -304,7 +308,6 @@ const uint32 align[4] = {
 /* External and forward references */
 
 extern int32 sys_model;
-extern const char *opcode[];
 
 t_stat cpu_reset (DEVICE *dptr);
 t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs);
@@ -316,12 +319,15 @@ t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat cpu_show_virt (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat cpu_set_idle (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat cpu_show_idle (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat cpu_set_instruction_set (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat cpu_show_instruction_set (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 const char *cpu_description (DEVICE *dptr);
 int32 cpu_get_vsw (int32 sw);
 static SIM_INLINE int32 get_istr (int32 lnt, int32 acc);
 int32 ReadOcta (int32 va, int32 *opnd, int32 j, int32 acc);
 t_bool cpu_show_opnd (FILE *st, InstHistory *h, int32 line);
 t_stat cpu_show_hist_records (FILE *st, t_bool do_header, int32 start, int32 count);
+int32 cpu_emulate_exception (int32 *opnd, int32 cc, int32 opc, int32 acc);
 void cpu_idle (void);
 
 /* CPU data structures
@@ -339,7 +345,7 @@ UNIT cpu_unit = {
 const char *psl_modes[] = {"K", "E", "S", "U"};
 
 
-BITFIELD psl_bits[] = {
+BITFIELD cpu_psl_bits[] = {
     BIT(C),                                 /* Carry */
     BIT(V),                                 /* Overflow */
     BIT(Z),                                 /* Zero */
@@ -381,7 +387,7 @@ REG cpu_reg[] = {
     { HRDATAD (AP,      R[nAP], 32, "Alias for R12") },
     { HRDATAD (FP,      R[nFP], 32, "Alias for R13") },
     { HRDATAD (SP,      R[nSP], 32, "Alias for R14") },
-    { HRDATADF(PSL,        PSL, 32, "processor status longword", psl_bits) },
+    { HRDATADF(PSL,        PSL, 32, "processor status longword", cpu_psl_bits) },
     { HRDATAD (CC,         PSL,  4, "condition codes, PSL<3:0>") },
     { HRDATAD (KSP,       KSP,  32, "kernel stack pointer") },
     { HRDATAD (ESP,       ESP,  32, "executive stack pointer") },
@@ -418,25 +424,28 @@ REG cpu_reg[] = {
 MTAB cpu_mod[] = {
     { UNIT_CONH, 0, "HALT to SIMH", "SIMHALT", NULL, NULL, NULL, "Set HALT to trap to simulator" },
     { UNIT_CONH, UNIT_CONH, "HALT to console", "CONHALT", NULL, NULL, NULL, "Set HALT to trap to console ROM" },
-    { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE={VMS|ULTRIX|ULTRIX-1.X|ULTRIXOLD|NETBSD|NETBSDOLD|OPENBSD|OPENBSDOLD|QUASIJARUS|32V|ELN}{:n}", &cpu_set_idle, &cpu_show_idle, NULL, "Display idle detection mode" },
+    { MTAB_XTD|MTAB_VDV, 0, "IDLE", "IDLE={VMS|ULTRIX|ULTRIX-1.X|ULTRIXOLD|NETBSD|NETBSDOLD|OPENBSD|OPENBSDOLD|QUASIJARUS|32V|ELN|MDM}{:n}", &cpu_set_idle, &cpu_show_idle, NULL, "Display idle detection mode" },
     { MTAB_XTD|MTAB_VDV, 0, NULL, "NOIDLE", &sim_clr_idle, NULL, NULL,  "Disables idle detection" },
     MEM_MODIFIERS,   /* Model specific memory modifiers from vaxXXX_defs.h */
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP|MTAB_NC, 0, "HISTORY", "HISTORY",
       &cpu_set_hist, &cpu_show_hist, NULL, "Displays instruction history" },
     { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_SHP, 0, "VIRTUAL", NULL,
       NULL, &cpu_show_virt, NULL, "show translation for address arg in KESU mode" },
-    CPU_MODEL_MODIFIERS, /* Model specific cpu modifiers from vaxXXX_defs.h */
+    CPU_MODEL_MODIFIERS  /* Model specific cpu modifiers from vaxXXX_defs.h */
+    CPU_INST_MODIFIERS   /* Model specific cpu instruction modifiers from vaxXXX_defs.h */
     { 0 }
     };
 
 DEBTAB cpu_deb[] = {
     { "INTEXC",    LOG_CPU_I,           "interrupt and exception activities" },
     { "REI",       LOG_CPU_R,           "REI activities" },
+    { "ABORT",     LOG_CPU_A,           "Abort activities" },
     { "CONTEXT",   LOG_CPU_P,           "context switching activities" },
     { "RSVDFAULT", LOG_CPU_FAULT_RSVD,  "reserved fault activities" },
     { "FLTFAULT",  LOG_CPU_FAULT_FLT,   "floating fault activities" },
     { "CMODFAULT", LOG_CPU_FAULT_CMODE, "cmode fault activities" },
     { "MCHKFAULT", LOG_CPU_FAULT_MCHK,  "machine check fault activities" },
+    { "EMULFAULT", LOG_CPU_FAULT_EMUL,  "instruction emulation fault activities" },
     { NULL, 0 }
     };
 
@@ -524,6 +533,9 @@ else if (abortval < 0) {                                /* mm or rsrv or int */
             else R[rrn] = R[rrn] + rlnt;
             }
         }
+    sim_debug (LOG_CPU_A, &cpu_dev, "abort=%08X, fault_PC=%08x, SP=%08x, PC=%08x, PSL=%08x ",
+                 -abortval, fault_PC, PC, SP, PSL);
+    sim_debug_bits(LOG_CPU_A, &cpu_dev, cpu_psl_bits, PSL, PSL, 1);
     PSL = PSL & ~PSL_TP;                                /* clear <tp> */
     recqptr = 0;                                        /* clear queue */
     delta = PC - fault_PC;                              /* save delta PC */
@@ -571,6 +583,8 @@ else if (abortval < 0) {                                /* mm or rsrv or int */
         break;
 
     case SCB_MCHK:                                      /* machine check */
+        sim_debug (LOG_CPU_FAULT_MCHK, &cpu_dev, "%s fault_PC=%08x, PSL=%08x, cc=%08x, PC=%08x, delta-%08X, p1=%08X\n",
+                                                 opcode[opc], fault_PC, PSL, cc, PC, delta, p1);
         cc = machine_check (p1, opc, cc, delta);        /* system specific */
         in_ie = 0;
         GET_CUR;                                        /* PSL<cur> changed */
@@ -714,9 +728,27 @@ for ( ;; ) {
         opc = opc | 0x100;                              /* flag */
         }
     numspec = drom[opc][0];                             /* get # specs */
+#if !defined(FULL_VAX)
+    if (((DR_GETIGRP(numspec) == DR_GETIGRP(IG_BSDFL)) && (!(cpu_instruction_set & VAX_DFLOAT))) ||
+        ((DR_GETIGRP(numspec) == DR_GETIGRP(IG_BSGFL)) && (!(cpu_instruction_set & VAX_GFLOAT))) ||
+        (DR_GETIGRP(numspec) == DR_GETIGRP(IG_RSVD)))   /* explicit reserved instruction? */
+        RSVD_INST_FAULT(opc);
+#endif
+#if defined(VAX_610)
+    /* 
+     * This case is formally UNPREDICTABLE, but it is how the MicroVAX I 
+     * CPU worked.  Instructions without the DR_F in their drom table 
+     * entry are specifically uninterruptible instructions, so this 
+     * would not ever happen during normal execution, but the MicroVAX I
+     * HCORE diagnostic contrives this as a test and expects thost cases
+     * to be ignored.
+     */
+    if ((PSL & PSL_FPD) && (numspec & DR_F)) {
+#else
     if (PSL & PSL_FPD) {
         if ((numspec & DR_F) == 0)
-            RSVD_INST_FAULT;
+            RSVD_INST_FAULT(opc);
+#endif
         j = 0;                                          /* no operands */
         }
     else {
@@ -901,20 +933,11 @@ for ( ;; ) {
 
             case AIN|VB:
             case AIN|WB: case AIN|WW: case AIN|WL: case AIN|WQ: case AIN|WO:
-/*              CHECK_FOR_PC; */
                 opnd[j++] = OP_MEM;
             case AIN|AB: case AIN|AW: case AIN|AL: case AIN|AQ: case AIN|AO:
                 va = opnd[j++] = R[rn];
                 if (rn == nPC) {
-                    if (DR_LNT (disp) >= L_QUAD) {
-                        GET_ISTR (temp, L_LONG);
-                        GET_ISTR (temp, L_LONG);
-                        if (DR_LNT (disp) == L_OCTA) {
-                            GET_ISTR (temp, L_LONG);
-                            GET_ISTR (temp, L_LONG);
-                            }
-                        }
-                    else GET_ISTR (temp, DR_LNT (disp));
+                    SETPC (PC + DR_LNT (disp));
                     }
                 else {
                     R[rn] = R[rn] + DR_LNT (disp);
@@ -1425,10 +1448,15 @@ for ( ;; ) {
                     break;
 
                 case AIN:
-                    CHECK_FOR_PC;
                     index = index + R[rn];
-                    R[rn] = R[rn] + DR_LNT (disp);
-                    recq[recqptr++] = RQ_REC (AIN | (disp & DR_LNMASK), rn);
+                    if (rn == nPC) {
+                        IDX_IMM_TEST;
+                        SETPC (PC + DR_LNT (disp));
+                        }
+                    else {
+                        R[rn] = R[rn] + DR_LNT (disp);
+                        recq[recqptr++] = RQ_REC (AIN | (disp & DR_LNMASK), rn);
+                        }
                     break;
 
                 case AID:
@@ -1785,7 +1813,7 @@ for ( ;; ) {
         if (op1 >= 0) temp = R[op1] & WMASK;            /* reg? ADDW2 */
         else {
             if (op2 & 1)                                /* mem? chk align */
-                RSVD_OPND_FAULT;
+                RSVD_OPND_FAULT(ADAWI);
             temp = Read (op2, L_WORD, WA);              /* ok, ADDW2 */
             }
         r = (op0 + temp) & WMASK;
@@ -2462,8 +2490,11 @@ for ( ;; ) {
         break;
 
     case BLBC:
-        if ((op0 & 1) == 0)                             /* br if bit clear */
+        if ((op0 & 1) == 0) {                           /* br if bit clear */
+            if (fault_PC == 0x20040C09)                 /* MicroVAX 2 Boot ROM Character Prompt? */
+                cpu_idle();
             BRANCHB (brdisp);
+            }
         break;
 
 /* Extract field instructions - ext?v pos.rl,size.rb,base.wb,dst.wl
@@ -2591,7 +2622,7 @@ for ( ;; ) {
 
     case HALT:
         if (PSL & PSL_CUR)                              /* not kern? rsvd inst */
-            RSVD_INST_FAULT;
+            RSVD_INST_FAULT(HALT);
         else {
             /* allow potentially pending I/O (console output, 
                or other devices) to complete before taking
@@ -2629,14 +2660,14 @@ for ( ;; ) {
 
     case BISPSW:
         if (opnd[0] & PSW_MBZ)
-            RSVD_OPND_FAULT;
+            RSVD_OPND_FAULT(BISPW);
         PSL = PSL | (opnd[0] & ~CC_MASK);
         cc = cc | (opnd[0] & CC_MASK);
         break;
 
     case BICPSW:
         if (opnd[0] & PSW_MBZ)
-            RSVD_OPND_FAULT;
+            RSVD_OPND_FAULT(BICPSW);
         PSL = PSL & ~opnd[0];
         cc = cc & ~opnd[0];
         break;
@@ -2695,6 +2726,12 @@ for ( ;; ) {
         break;
 
     case CMPC3: case CMPC5:
+#if defined(VAX_610)
+        if (opc == CMPC5) {
+            cc = cpu_emulate_exception (opnd, cc, opc, acc);
+            break;
+            }
+#endif
         cc = op_cmpc (opnd, opc & 4, acc);
         break;
 
@@ -3068,14 +3105,18 @@ for ( ;; ) {
         break;
 
     case MTPR:
-        cc = (cc & CC_C) | op_mtpr (opnd);
+        mxpr_cc_vc = cc & CC_C;                         /* std: V=0, C unchgd */
+        cc = op_mtpr (opnd);
+        cc = cc | (mxpr_cc_vc & (CC_V|CC_C));           /* or in V,C */
         SET_IRQL;                                       /* update intreq */
         break;
 
     case MFPR:
+        mxpr_cc_vc = cc & CC_C;                         /* std: V=0, C unchgd */
         r = op_mfpr (opnd);
         WRITE_L (r);
-        CC_IIZP_L (r);
+        CC_IIZZ_L (r);                                  /* set NV, clr VC */
+        cc = cc | (mxpr_cc_vc & (CC_V|CC_C));           /* or in V,C */
         break;
 
 /* CIS or emulated instructions */
@@ -3092,6 +3133,10 @@ for ( ;; ) {
 /* Octaword or reserved instructions */
 
     case PUSHAO: case MOVAO: case CLRO: case MOVO:
+#if defined(VAX_610)
+        cc = cpu_emulate_exception (opnd, cc, opc, acc);
+        break;
+#endif
     case TSTH: case MOVH: case MNEGH: case CMPH:
     case CVTBH: case CVTWH: case CVTLH:
     case CVTHB: case CVTHW: case CVTHL: case CVTRHL:
@@ -3109,7 +3154,7 @@ for ( ;; ) {
         break;
 
     default:
-        RSVD_INST_FAULT;
+        RSVD_INST_FAULT(opc);
         break;
         }                                               /* end case op */
     }                                                   /* end for */
@@ -3182,12 +3227,80 @@ opnd[j++] = Read (va + 12, L_LONG, acc);
 return j;
 }
 
+
+/* CIS instructions - invoke emulator interface
+
+        opnd[0:5] =     six operands to be pushed (if PSL<fpd> = 0)
+        cc      =       condition codes
+        opc     =       opcode
+
+   If FPD is set, push old PC and PSL on stack, vector thru SCB.
+   If FPD is clear, push opcode, old PC, operands, new PC, and PSL
+        on stack, vector thru SCB.
+   In both cases, the exception occurs in the current mode.
+*/
+
+int32 cpu_emulate_exception (int32 *opnd, int32 cc, int32 opc, int32 acc)
+{
+int32 vec;
+
+if (PSL & PSL_FPD) {                                    /* FPD set? */
+    Read (SP - 1, L_BYTE, WA);                          /* wchk stack */
+    Write (SP - 8, fault_PC, L_LONG, WA);               /* push old PC */       
+    Write (SP - 4, PSL | cc, L_LONG, WA);               /* push PSL */
+    SP = SP - 8;                                        /* decr stk ptr */
+    vec = ReadLP ((SCBB + SCB_EMULFPD) & PAMASK);
+    sim_debug (LOG_CPU_FAULT_EMUL, &cpu_dev, "FPD OP=%s, fault_PC=%08x, PC=%08x, PSL=%08x, SP=%08x, nPC=%08x ",
+                 opcode[opc], fault_PC, PC, PSL, SP, vec);
+    sim_debug_bits(LOG_CPU_FAULT_EMUL, &cpu_dev, cpu_psl_bits, PSL, PSL, 1);
+    }
+else {
+    if (opc == CVTPL)                                   /* CVTPL? .wl */
+        opnd[2] = (opnd[2] >= 0)? ~opnd[2]: opnd[3];
+    Read (SP - 1, L_BYTE, WA);                          /* wchk stack */
+    Write (SP - 48, opc, L_LONG, WA);                   /* push opcode */
+    Write (SP - 44, fault_PC, L_LONG, WA);              /* push old PC */
+    Write (SP - 40, opnd[0], L_LONG, WA);               /* push operands */
+    Write (SP - 36, opnd[1], L_LONG, WA);
+    Write (SP - 32, opnd[2], L_LONG, WA);
+    Write (SP - 28, opnd[3], L_LONG, WA);
+    Write (SP - 24, opnd[4], L_LONG, WA);
+    Write (SP - 20, opnd[5], L_LONG, WA);
+    Write (SP - 8, PC, L_LONG, WA);                     /* push cur PC */
+    Write (SP - 4, PSL | cc, L_LONG, WA);               /* push PSL */
+    SP = SP - 48;                                       /* decr stk ptr */
+    vec = ReadLP ((SCBB + SCB_EMULATE) & PAMASK);
+    sim_debug (LOG_CPU_FAULT_EMUL, &cpu_dev, "OP=%s, fault_PC=%08x, PC=%08x, PSL=%08x, SP=%08x, nPC=%08x ",
+                 opcode[opc], fault_PC, PC, PSL, SP, vec);
+    sim_debug_bits(LOG_CPU_FAULT_EMUL, &cpu_dev, cpu_psl_bits, PSL, PSL, 1);
+    }
+PSL = PSL & ~(PSL_TP | PSL_FPD | PSW_DV | PSW_FU | PSW_IV | PSW_T);
+JUMP (vec & ~03);                                       /* set new PC */
+return 0;                                               /* set new cc's */
+}
+
+
 /* Idle before the next instruction */
 
 void cpu_idle (void)
 {
 sim_idle (TMR_CLK, TRUE);
 }
+
+/*
+ * This sequence of instructions is a mix that mimics
+ * a resonable instruction set that is a close estimate
+ * to the calibrated result without a direct "loop to 
+ * self" instruction that would halt simulation.
+ */
+
+static const char *vax_clock_precalibrate_commands[] = {
+    "-m 100 INCL  120",
+    "-m 103 INCL  124",
+    "-m 106 MULL3 120,124,128",
+    "-m 10D BRW   100",
+    "PC 100",
+    NULL};
 
 /* Reset */
 
@@ -3202,8 +3315,10 @@ ASTLVL = 4;
 mapen = 0;
 FLUSH_ISTR;                             /* init I-stream */
 if (M == NULL) {                        /* first time init? */
+    vax_init();
     sim_brk_types = sim_brk_dflt = SWMASK ('E');
     sim_vm_is_subroutine_call = cpu_is_pc_a_subroutine_call;
+    sim_clock_precalibrate_commands = vax_clock_precalibrate_commands;
     pcq_r = find_reg ("PCQ", NULL, dptr);
     if (pcq_r == NULL)
         return SCPE_IERR;
@@ -3616,6 +3731,7 @@ static struct os_idle os_tab[] = {
     { "OPENBSDOLD",     VAX_IDLE_QUAD },
     { "32V",            VAX_IDLE_VMS },
     { "ELN",            VAX_IDLE_ELN },
+    { "MDM",            VAX_IDLE_ELN },
     { NULL, 0 }
     };
 
@@ -3647,7 +3763,144 @@ if (sim_idle_enab && (cpu_idle_type != 0))
 sim_show_idle (st, uptr, val, desc);
 return SCPE_OK;
 }
+ 
+static struct {
+    int32 mask;
+    const char *match;
+    const char *desc;
+    } inst_groups[] = {
+        {0,          "",            ""},                            /* Reserved Opcode */
+        {VAX_BASE,   "BASE",        "Base Group"},                  /* Base Instruction Group       */
+        {VAX_GFLOAT, "G-FLOAT",     "G-Float"},                     /*   Base subgroup G-Float      */
+        {VAX_DFLOAT, "D-FLOAT",     "D-Float"},                     /*   Base subgroup D-Float      */
+        {VAX_PACKED, "PACKED",      "Packed-Decimal-String-Group"}, /* packed-decimal-string group  */
+        {VAX_EXTAC,  "EXTENDED",    "Extended-Accuracy-Group"},     /* extended-accuracy group      */
+        {VAX_EMONL,  "EMULATED",    "Emulated-Only-Group"},         /* emulated only instructions   */
+//      {VAX_VECTR,  "VECTOR",      "Vector-Processing-Group"},     /* vector-processing group      */
+        {0,          NULL,          NULL}
+    };
 
+t_stat cpu_set_instruction_set (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
+{
+if (!cptr || !*cptr)
+    return SCPE_ARG;
+while (1) {
+    int i;
+    t_bool invert = FALSE;
+    char gbuf[CBUFSIZE];
+
+    cptr = get_glyph (cptr, gbuf, ';');
+    if (!gbuf[0])
+        break;
+    if (0 == strncmp (gbuf, "NO", 2)) {
+        invert = TRUE;
+        memmove (gbuf, gbuf + 2, 1 + strlen (gbuf + 2));
+        }
+    for (i=0; inst_groups[i].match != NULL; i++)
+        if (MATCH_CMD (gbuf, inst_groups[i].match) == 0)
+            break;
+    if (inst_groups[i].match == NULL)
+        return sim_messagef (SCPE_ARG, "unknown instruction set group: %s\n", gbuf);
+    if (invert)
+        cpu_instruction_set &= ~inst_groups[i].mask;
+    else
+        cpu_instruction_set |= inst_groups[i].mask;
+    }
+return SCPE_OK;
+}
+
+/* Used when sorting a list of opcode names */
+static int _opc_name_compare (const void *pa, const void *pb)
+{
+const char **a = (const char **)pa;
+const char **b = (const char **)pb;
+
+return strcmp (*a, *b);
+}
+
+t_stat cpu_show_instruction_group (FILE *st, int32 groupmask)
+{
+int opc;
+int group;
+int matches;
+char const *opcd_tmp[NUM_INST];
+
+for (opc=matches=0; opc<NUM_INST; opc++) {
+    t_bool match = FALSE;
+
+    for (group=0; (!match) && (group<=IG_MAX_GRP); group++) {
+        if ((1 << group) & groupmask)
+            match = (DR_GETIGRP(drom[opc][0]) == group);
+        }
+    if (match)
+        opcd_tmp[matches++] = opcode[opc];
+    }
+qsort ((void *)opcd_tmp, matches, sizeof (opcd_tmp[0]), _opc_name_compare);
+for (opc=0; opc<matches; opc++)
+    fprintf (st, "%s\t%s", (0 == opc%8) ? "\n" : "", opcd_tmp[opc]);
+fprintf (st, "\n");
+return SCPE_OK;
+}
+
+t_stat cpu_show_instruction_set (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+int i;
+
+fprintf (st, "Implementing: ");
+if ((cpu_instruction_set & FULL_INSTRUCTION_SET) == FULL_INSTRUCTION_SET) {
+    fprintf (st, "All standard VAX instructions");
+#if defined(CMPM_VAX)
+    fprintf (st, " and Compatibility mode");
+#endif
+    if (sim_switches & SWMASK ('V'))
+        cpu_show_instruction_group (st, cpu_instruction_set);
+//  if (cpu_instruction_set & ~VAX_VECTR)
+//      fprintf (st, ",\n\tEmulating: Vector-Group");
+    }
+else {
+    if ((cpu_instruction_set & VAX_FULL_BASE) == VAX_FULL_BASE) {
+        fprintf (st, "Base Instruction Group");
+        if (sim_switches & SWMASK ('V'))
+            cpu_show_instruction_group (st, VAX_FULL_BASE);
+        }
+    else {
+        if ((cpu_instruction_set & VAX_BASE) == VAX_BASE) {
+            fprintf (st, "Base Instruction Group");
+            if (!(cpu_instruction_set & VAX_GFLOAT)) {
+                fprintf (st, " without G-Float");
+                if (!(cpu_instruction_set & VAX_DFLOAT))
+                    fprintf (st, " and D-Float");
+                }
+            else {
+                if (!(cpu_instruction_set & VAX_DFLOAT))
+                    fprintf (st, " without D-Float");
+                }
+            }
+        else {
+            if (!(cpu_instruction_set & VAX_DFLOAT))
+                fprintf (st, " without D-Float");
+            }
+        if (sim_switches & SWMASK ('V'))
+            cpu_show_instruction_group (st, cpu_instruction_set);
+        }
+    for (i=4; inst_groups[i].match; i++) {
+        if (cpu_instruction_set & inst_groups[i].mask) {
+            fprintf (st, " %s", inst_groups[i].desc);
+            if (sim_switches & SWMASK ('V'))
+                cpu_show_instruction_group (st, inst_groups[i].mask);
+            }
+        }
+    fprintf (st, "\n%sEmulating:", (sim_switches & SWMASK ('V')) ? "" : "\t");
+    for (i=1; inst_groups[i].match; i++) {
+        if (!(cpu_instruction_set & inst_groups[i].mask)) {
+            fprintf (st, " %s", inst_groups[i].desc);
+            if (sim_switches & SWMASK ('V'))
+                cpu_show_instruction_group (st, inst_groups[i].mask);
+            }
+        }
+    }
+return SCPE_OK;
+}
 
 t_stat cpu_load_bootcode (const char *filename, const unsigned char *builtin_code, size_t size, t_bool rom, t_addr offset)
 {
@@ -3734,5 +3987,13 @@ fprintf (st, "with each history entry.\n");
 fprintf (st, "When writing history to a file (SET CPU HISTORY=n:file), 'n' specifies\n");
 fprintf (st, "the buffer flush frequency.  Warning: prodigious amounts of disk space\n");
 fprintf (st, "may be comsumed.  The maximum length for the history is %d entries.\n\n", HIST_MAX);
+fprintf (st, "Different VAX systems implemented different VAX architecture instructions\n");
+fprintf (st, "in hardware with other instructions possibly emulated by software in the\n");
+fprintf (st, "system.  The instructions that a particular simulator implements can be\n");
+fprintf (st, "displayed with:\n\n");
+fprintf (st, "   sim> SHOW CPU INSTRUCTIONS     display the instructoin groups that are\n");
+fprintf (st, "                                  implemented and emulated\n");
+fprintf (st, "   sim> SHOW CPU -V INSTRUCTIONS  disable the list of instructions implemented\n");
+fprintf (st, "                                  and emulated\n\n");
 return SCPE_OK;
 }

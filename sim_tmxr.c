@@ -303,11 +303,6 @@
 
      sim> set MUX disconnect=2
 
-   A line which is connected to a serial port can be manually closed by
-   adding the -C switch to a disconnect command.
-
-     sim> set -C MUX disconnect=2
-
     Full Modem Control serial port support.
 
     This library supports devices which wish to emulate full modem 
@@ -1005,6 +1000,7 @@ char *address;
 char msg[512];
 uint32 poll_time = sim_os_msec ();
 
+memset (msg, 0, sizeof (msg));
 if (mp->last_poll_time == 0) {                          /* first poll initializations */
     UNIT *uptr = mp->uptr;
 
@@ -1063,7 +1059,7 @@ if (mp->master) {
         newsock = sim_accept_conn_ex (mp->master, &address, (mp->packet ? SIM_SOCK_OPT_NODELAY : 0));/* poll connect */
 
     if (newsock != INVALID_SOCKET) {                    /* got a live one? */
-        sprintf (msg, "tmxr_poll_conn() - Connection from %s", address);
+        snprintf (msg, sizeof (msg) - 1, "tmxr_poll_conn() - Connection from %s", address);
         tmxr_debug_connect (mp, msg);
         op = mp->lnorder;                               /* get line connection order list pointer */
         i = mp->lines;                                  /* play it safe in case lines == 0 */
@@ -1199,7 +1195,7 @@ for (i = 0; i < mp->lines; i++) {                       /* check each line in se
                             strcpy (lp->ipad, lp->destination);
                             lp->cnms = sim_os_msec ();
                             sim_getnames_sock (lp->sock, &sockname, &peername);
-                            sprintf (msg, "tmxr_poll_conn() - Outgoing Line Connection to %s (%s->%s) established", lp->destination, sockname, peername);
+                            snprintf (msg, sizeof (msg) -1, "tmxr_poll_conn() - Outgoing Line Connection to %s (%s->%s) established", lp->destination, sockname, peername);
                             tmxr_debug_connect_line (lp, msg);
                             free (sockname);
                             free (peername);
@@ -1211,7 +1207,7 @@ for (i = 0; i < mp->lines; i++) {                       /* check each line in se
                                 }
                             return i;
                         case -1:                                /* failed connection */
-                            sprintf (msg, "tmxr_poll_conn() - Outgoing Line Connection to %s failed", lp->destination);
+                            snprintf (msg, sizeof (msg) -1, "tmxr_poll_conn() - Outgoing Line Connection to %s failed", lp->destination);
                             tmxr_debug_connect_line (lp, msg);
                             tmxr_reset_ln (lp);                 /* retry */
                             break;
@@ -1224,25 +1220,25 @@ for (i = 0; i < mp->lines; i++) {                       /* check each line in se
                         char *sockname, *peername;
 
                         sim_getnames_sock (newsock, &sockname, &peername);
-                        sprintf (msg, "tmxr_poll_conn() - Incoming Line Connection from %s (%s->%s)", address, peername, sockname);
+                        snprintf (msg, sizeof (msg) -1, "tmxr_poll_conn() - Incoming Line Connection from %s (%s->%s)", address, peername, sockname);
                         tmxr_debug_connect_line (lp, msg);
                         free (sockname);
                         free (peername);
                         ++mp->sessions;                             /* count the new session */
 
                         if (lp->destination) {                      /* Virtual Null Modem Cable? */
-                            char host[CBUFSIZE];
+                            char host[sizeof(msg) - 64];
 
                             if (sim_parse_addr (lp->destination, host, sizeof(host), NULL, NULL, 0, NULL, address)) {
                                 tmxr_msg (newsock, "Rejecting connection from unexpected source\r\n");
-                                sprintf (msg, "tmxr_poll_conn() - Rejecting line connection from: %s, Expected: %s", address, host);
+                                snprintf (msg, sizeof (msg) -1, "tmxr_poll_conn() - Rejecting line connection from: %s, Expected: %s", address, host);
                                 tmxr_debug_connect_line (lp, msg);
                                 sim_close_sock (newsock);
                                 free (address);
                                 continue;                           /* Try for another connection */
                                 }
                             if (lp->connecting) {
-                                sprintf (msg, "tmxr_poll_conn() - aborting outgoing line connection attempt to: %s", lp->destination);
+                                snprintf (msg, sizeof (msg) -1, "tmxr_poll_conn() - aborting outgoing line connection attempt to: %s", lp->destination);
                                 tmxr_debug_connect_line (lp, msg);
                                 sim_close_sock (lp->connecting);    /* abort our as yet unconnnected socket */
                                 lp->connecting = 0;
@@ -1286,7 +1282,7 @@ for (i = 0; i < mp->lines; i++) {                       /* check each line in se
 
     if (lp->destination && (!lp->sock) && (!lp->connecting) && (!lp->serport) && 
         (!lp->modem_control || (lp->modembits & TMXR_MDM_DTR))) {
-        sprintf (msg, "tmxr_poll_conn() - establishing outgoing connection to: %s", lp->destination);
+        snprintf (msg, sizeof (msg) - 1, "tmxr_poll_conn() - establishing outgoing connection to: %s", lp->destination);
         tmxr_debug_connect_line (lp, msg);
         lp->connecting = sim_connect_sock_ex (lp->datagram ? lp->port : NULL, lp->destination, "localhost", NULL, (lp->datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | (lp->mp->packet ? SIM_SOCK_OPT_NODELAY : 0));
         }
@@ -2125,23 +2121,23 @@ for (i = 0; i < mp->lines; i++) {                       /* loop thru lines */
 }
 
 
-int32 tmxr_rqln_bare (const TMLN *lp, t_bool speed)
+static int32 tmxr_rqln_bare (const TMLN *lp, t_bool speed)
 {
 if (speed) {
     if (lp->send.extoff < lp->send.insoff) {/* buffered SEND data? */
-        if (sim_gtime () < lp->send.next_time) 
+        if (sim_gtime () < lp->send.next_time) /* too soon? */
             return 0;
         else
-            return lp->send.delay ? 1 : (lp->send.insoff - lp->send.extoff);
+            return 1;
         }
     if (lp->rxbps) {                        /* consider speed and rate limiting? */
         if (sim_gtime () < lp->rxnexttime)  /* too soon? */
             return 0;
         else
-            return 1;
+            return ((lp->rxbpi - lp->rxbpr + ((lp->rxbpi < lp->rxbpr)? lp->rxbsz : 0)) > 0) ? 1 : 0;
         }
     }
-return (lp->rxbpi - lp->rxbpr + ((lp->rxbpi < lp->rxbpr)? lp->rxbsz: 0));
+return (lp->rxbpi - lp->rxbpr + ((lp->rxbpi < lp->rxbpr)? lp->rxbsz : 0));
 }
 
 /* Return count of available characters ready to be read for line */
@@ -2744,8 +2740,10 @@ while (*tptr) {
                 else
                     if (0 == MATCH_CMD (cptr, "TELNET"))
                         listennotelnet = FALSE;
-                    else
-                        return sim_messagef (SCPE_ARG, "Invalid Specifier: %s\n", tptr);
+                    else {
+                        if (*tptr)
+                            return sim_messagef (SCPE_ARG, "Invalid Specifier: %s\n", tptr);
+                        }
                 }
             cptr = init_cptr;
             }
@@ -3913,7 +3911,7 @@ static DEBTAB tmxr_debug[] = {
 
 t_stat tmxr_add_debug (DEVICE *dptr)
 {
-if (!(dptr->flags & DEV_MUX))
+if (DEV_TYPE(dptr) != DEV_MUX)
     return SCPE_OK;
 return sim_add_debug_flags (dptr, tmxr_debug);
 }
@@ -4402,6 +4400,9 @@ if (single_line) {          /* Single Line Multiplexer */
         }
     fprintf (st, "A Telnet listening port can be configured with:\n\n");
     fprintf (st, "   sim> ATTACH %s {interface:}port\n\n", dptr->name);
+    fprintf (st, "The -U switch can be specified on the attach command that specifies\n");
+    fprintf (st, "a listening port.  This will allow a listening port to be reused if\n");
+    fprintf (st, "some prior connections haven't completely shutdown.\n\n");
     fprintf (st, "Line buffering can be enabled for the %s device with:\n\n", dptr->name);
     fprintf (st, "   sim> ATTACH %s Buffer{=bufsize}\n\n", dptr->name);
     fprintf (st, "Line buffering can be disabled for the %s device with:\n\n", dptr->name);
@@ -4428,6 +4429,9 @@ else {
     fprintf (st, "   sim> ATTACH %s Line=n,NoModem\n\n", dptr->name);
     fprintf (st, "A Telnet listening port can be configured with:\n\n");
     fprintf (st, "   sim> ATTACH %s {interface:}port\n\n", dptr->name);
+    fprintf (st, "The -U switch can be specified on the attach command that specifies\n");
+    fprintf (st, "a listening port.  This will allow a listening port to be reused if\n");
+    fprintf (st, "some prior connections haven't completely shutdown.\n\n");
     if (mux)
         fprintf (st, "Line buffering for all %d lines on the %s device can be configured with:\n\n", mux->lines, dptr->name);
     else
@@ -4608,9 +4612,12 @@ if (dptr->modifiers) {
             fprintf (st, "This will cause a telnet connection to be closed, but a serial port will\n");
             fprintf (st, "normally have DTR dropped for 500ms and raised again (thus hanging up a\n");
             fprintf (st, "modem on that serial port).\n\n");
-            fprintf (st, "A line which is connected to a serial port can be manually closed by\n");
-            fprintf (st, "adding the -C switch to a %s command.\n\n", mptr->mstring);
-            fprintf (st, "   sim> SET -C %s %s=n\n\n", dptr->name, mptr->mstring);
+            fprintf (st, "Any lines connected to serial port can be manually closed by unplugging\n");
+            fprintf (st, "the serial cable from the host computer.  Dynamically adding or removing\n");
+            fprintf (st, "a serial port from a mux while the simulated operating system is running\n");
+            fprintf (st, "is guaranteed to have an inconsistent state between the running OS and\n");
+            fprintf (st, "the simulated port state.  Restart the simulator without the serial port\n");
+            fprintf (st, "attached.\n\n");
             }
     }
 return SCPE_OK;
@@ -4845,8 +4852,7 @@ if (lp->txstall)
    If the line was connected to a tcp session, the socket associated with the
    line will be closed.  If the line was connected to a serial port, the port
    will NOT be closed, but DTR will be dropped.  After a 500ms delay DTR will
-   be raised again.  If the sim_switches -C flag is set, then a serial port 
-   connection will be closed.
+   be raised again.
 
    Implementation notes:
 
@@ -4872,8 +4878,11 @@ if (lp == NULL)                                                 /* bad line numb
 if ((lp->sock) || (lp->serport)) {                              /* connection active? */
     if (!lp->notelnet)
         tmxr_linemsg (lp, "\r\nOperator disconnected line\r\n\n");/* report closure */
-    if (lp->serport && (sim_switches & SWMASK ('C')))
-        return tmxr_detach_ln (lp);
+    if (lp->serport && (sim_switches & SWMASK ('C'))) {
+        sim_messagef (SCPE_OK, "If you really feel the need to disconnect this serial port, unplug the cable\n");
+        sim_messagef (SCPE_OK, "from the serial port on your system.  Alternatively, you should restart the\n");
+        sim_messagef (SCPE_OK, "simulator without attaching the serial port in your configuration.\n");
+        }
     return tmxr_reset_ln_ex (lp, FALSE);                        /* drop the line */
     }
 

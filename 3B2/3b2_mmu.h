@@ -322,6 +322,7 @@ extern DEVICE mmu_dev;
 t_stat mmu_init(DEVICE *dptr);
 uint32 mmu_read(uint32 pa, size_t size);
 void mmu_write(uint32 pa, uint32 val, size_t size);
+CONST char *mmu_description(DEVICE *dptr);
 
 /* Physical memory read/write */
 uint8  pread_b(uint32 pa);
@@ -331,6 +332,9 @@ uint32 pread_w_u(uint32 pa);
 void   pwrite_b(uint32 pa, uint8 val);
 void   pwrite_h(uint32 pa, uint16 val);
 void   pwrite_w(uint32 pa, uint32 val);
+
+/* TODO: REMOVE AFTER DEBUGGING */
+uint32 safe_read_w(uint32 va);
 
 /* Virtual memory translation */
 uint32 mmu_xlate_addr(uint32 va, uint8 r_acc);

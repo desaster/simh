@@ -1,6 +1,6 @@
 /* vax780_defs.h: VAX 780 model-specific definitions file
 
-   Copyright (c) 2004-2017, Robert M Supnik
+   Copyright (c) 2004-2019, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -23,6 +23,7 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
+   23-Apr-19    RMS     Added hook for unpredictable indexed immediate .aw
    18-May-17    RMS     Added model-specific AST validation test
    19-Jan-17    RMS     Moved CR to BR6 (Mark Pizzolato)
    29-Mar-15    RMS     Added model specific IPR max
@@ -54,7 +55,11 @@
 */
 
 #ifndef FULL_VAX
-#define FULL_VAX        1
+#define FULL_VAX        1           /* Full Instruction Set Implemented */
+#endif
+
+#ifndef CMPM_VAX
+#define CMPM_VAX        1           /* Compatibility Mode Implemented */
 #endif
 
 #ifndef VAX_780_DEFS_H_
@@ -139,24 +144,25 @@
 
 /* 780 microcode patch 37 - only test LR<23:0> for appropriate length */
 
-#define ML_LR_TEST(r)   if (((uint32)((r) & 0xFFFFFF)) > 0x200000) RSVD_OPND_FAULT
+#define ML_LR_TEST(r)   if (((uint32)((r) & 0xFFFFFF)) > 0x200000) RSVD_OPND_FAULT(ML_LR_TEST)
 
 /* 780 microcode patch 38 - only test PxBR<31>=1, PxBR<30> = 0, and xBR<1:0> = 0 */
 
 #define ML_PXBR_TEST(r) if (((((uint32)(r)) & 0x80000000) == 0) || \
-                            ((((uint32)(r)) & 0x40000003) != 0)) RSVD_OPND_FAULT
-#define ML_SBR_TEST(r)  if ((((uint32)(r)) & 0x00000003) != 0) RSVD_OPND_FAULT
+                            ((((uint32)(r)) & 0x40000003) != 0)) RSVD_OPND_FAULT(ML_PXBR_TEST)
+#define ML_SBR_TEST(r)  if ((((uint32)(r)) & 0x00000003) != 0) RSVD_OPND_FAULT(ML_SBR_TEST)
 
 /* 780 microcode patch 78 - test xCBB<1:0> = 0 */
 
-#define ML_PA_TEST(r)   if ((((uint32)(r)) & 0x00000003) != 0) RSVD_OPND_FAULT
+#define ML_PA_TEST(r)   if ((((uint32)(r)) & 0x00000003) != 0) RSVD_OPND_FAULT(ML_PA_TEST)
 
-#define LP_AST_TEST(r)  if ((r) > AST_MAX) RSVD_OPND_FAULT
-#define LP_MBZ84_TEST(r) if ((((uint32)(r)) & 0xF8C00000) != 0) RSVD_OPND_FAULT
-#define LP_MBZ92_TEST(r) if ((((uint32)(r)) & 0x7FC00000) != 0) RSVD_OPND_FAULT
+#define LP_AST_TEST(r)  if ((r) > AST_MAX) RSVD_OPND_FAULT(LP_AST_TEST)
+#define LP_MBZ84_TEST(r) if ((((uint32)(r)) & 0xF8C00000) != 0) RSVD_OPND_FAULT(LP_MBZ84_TEST)
+#define LP_MBZ92_TEST(r) if ((((uint32)(r)) & 0x7FC00000) != 0) RSVD_OPND_FAULT(LP_MBZ92_TEST)
 
 #define MT_AST_TEST(r)  r = (r) & 07; \
-                        if ((r) > AST_MAX) RSVD_OPND_FAULT
+                        if ((r) > AST_MAX) RSVD_OPND_FAULT(MT_AST_TEST)
+#define IDX_IMM_TEST
 
 /* Memory */
 
@@ -180,7 +186,7 @@
 extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
 #define CPU_MODEL_MODIFIERS                                                                     \
                         { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={780|785}",                     \
-                          &cpu_set_model, &cpu_show_model, NULL, "Set/Show the simulator CPU Model" }
+                          &cpu_set_model, &cpu_show_model, NULL, "Set/Show the simulator CPU Model" },
 
 /* Unibus I/O registers */
 

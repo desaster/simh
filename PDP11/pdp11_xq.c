@@ -1822,7 +1822,9 @@ t_stat xq_process_turbo_rbdl(CTLR* xq)
       xq->var->ReadQ.loss = 0;          /* reset loss counter */
     }
 
-    Map_ReadW (rdra+(uint32)(((char *)(&xq->var->rring[xq->var->rbindx].rmd3))-((char *)&xq->var->rring)), sizeof(xq->var->rring[xq->var->rbindx].rmd3), (uint16 *)&xq->var->rring[xq->var->rbindx].rmd3);
+    status = Map_ReadW (rdra+(uint32)(((char *)(&xq->var->rring[xq->var->rbindx].rmd3))-((char *)&xq->var->rring)), sizeof(xq->var->rring[xq->var->rbindx].rmd3), (uint16 *)&xq->var->rring[xq->var->rbindx].rmd3);
+    if (status != SCPE_OK)
+      return xq_nxm_error(xq);
     if (xq->var->rring[xq->var->rbindx].rmd3 & XQ_RMD3_OWN)
       xq->var->rring[i].rmd2 |= XQ_RMD2_EOR;
 
@@ -2716,10 +2718,10 @@ t_stat xq_system_id (CTLR* xq, const ETH_MAC dest, uint16 receipt_id)
   memcpy (&msg[34], xq->var->mac, sizeof(ETH_MAC)); /* ROM address */
 
                                           /* DEVICE TYPE */
-  msg[40] = 37;                           /* type */
+  msg[40] = 100;                          /* type */
   msg[41] = 0x00;                         /* type */
   msg[42] = 0x01;                         /* length */
-  msg[43] = 0x11;                         /* value (0x11=DELQA) */
+  msg[43] = 0x25;                         /* value (0x25(37)=DELQA) */
   if (xq->var->type == XQ_T_DELQA_PLUS)   /* DELQA-T has different Device ID */
     msg[43] = 0x4B;                       /* value (0x4B(75)=DELQA-T) */
 
@@ -3309,19 +3311,28 @@ const char helpString[] =
 #endif
     "+sim> ATTACH %D udp:1234:remote.host.com:1234\n"
     "\n"
-    "2 Examples\n"
-    " To configure two simulators to talk to each other use the following\n"
-    " example:\n"
+    "2 Examples\n\n"
+    " Given a simulator that only wants to talk IP to the outside world use\n"
+    " the following example:\n"
     " \n"
-    " Machine 1\n"
-    "+sim> SET %D ENABLE\n"
-    "+sim> SET %D PEER=LOCALHOST:2222\n"
-    "+sim> ATTACH %D 1111\n"
+    "+sim> ATTACH %D NAT:\n"
     " \n"
-    " Machine 2\n"
-    "+sim> SET %D ENABLE\n"
-    "+sim> SET %U PEER=LOCALHOST:1111\n"
-    "+sim> ATTACH %U 2222\n"
+    " Given a simulator that only wants to talk IP but also wants to allow\n"
+    " incoming telnet use the following example:\n"
+    " \n"
+    "+sim> ATTACH %D NAT:tcp=2323:10.0.2.15:23\n"
+    " \n"
+    " This allows connections to host port 2323 to reach port 23 on the\n"
+    " simulated which is configured with IP Address 10.0.2.15\n"
+    "\n"
+    " Given a simulator that only wants to talk IP but also wants to allow\n"
+    " incoming telnet and ftp use the following example:\n"
+    " \n"
+    "+sim> ATTACH %D NAT:tcp=2323:10.0.2.15:23,tcp=2121:10.0.2.15:21\n"
+    " \n"
+    " This allows connections to host port 2323 to reach port 23 on the\n"
+    " simulated which is configured with IP Address 10.0.2.15 and connections\n"
+    " to host port 2121 to reach port 21 on the simulated system.\n"
     "\n"
     "1 Monitoring\n"
     " The %D device configuration and state can be displayed with one of the\n"

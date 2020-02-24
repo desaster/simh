@@ -40,10 +40,9 @@
 			<Tool
 				Name="VCCLCompilerTool"
 				Optimization="0"
-				AdditionalIncludeDirectories="../HP2100/;../../windows-build/libSDL/SDL2-2.0.5/include;./;../;../slirp;../slirp_glue;../slirp_glue/qemu;../slirp_glue/qemu/win32/include;../../windows-build/winpcap/Wpdpack/Include;../../windows-build/PCRE/include/;../../windows-build/pthreads;../../windows-build/libSDL/SDL2-2.0.8/include;../../windows-build/libpng-1.6.18"
-				PreprocessorDefinitions="HAVE_INT64;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;SIM_NEED_GIT_COMMIT_ID;HAVE_PCREPOSIX_H;PCRE_STATIC"
+				AdditionalIncludeDirectories="../HP2100/;./;../;../slirp;../slirp_glue;../slirp_glue/qemu;../slirp_glue/qemu/win32/include;../../windows-build/include;;../../windows-build/include/SDL2"
+				PreprocessorDefinitions="HAVE_INT64;SIM_BUILD_TOOL=simh-Visual-Studio-Project;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;SIM_NEED_GIT_COMMIT_ID;HAVE_PCRE_H;PCRE_STATIC"
 				KeepComments="false"
-				MinimalRebuild="true"
 				BasicRuntimeChecks="0"
 				RuntimeLibrary="1"
 				UsePrecompiledHeader="0"
@@ -63,7 +62,7 @@
 			/>
 			<Tool
 				Name="VCLinkerTool"
-				AdditionalDependencies="libcmtd.lib wsock32.lib winmm.lib Iphlpapi.lib pcrestaticd.lib pcreposixstaticd.lib SDL2-StaticD.lib SDL2_ttf-StaticD.lib freetype2412MT_D.lib libpng16.lib zlib.lib dxguid.lib Imm32.lib Version.lib"
+				AdditionalDependencies="libcmtd.lib wsock32.lib winmm.lib Iphlpapi.lib pcrestaticd.lib SDL2-StaticD.lib SDL2_ttf-StaticD.lib freetype2412MT_D.lib libpng16.lib zlib.lib dxguid.lib Imm32.lib Version.lib"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="../../windows-build/lib/Debug/"
 				GenerateDebugInformation="true"
@@ -125,8 +124,8 @@
 				InlineFunctionExpansion="1"
 				OmitFramePointers="true"
 				WholeProgramOptimization="true"
-				AdditionalIncludeDirectories="../HP2100/;../../windows-build/libSDL/SDL2-2.0.5/include;./;../;../slirp;../slirp_glue;../slirp_glue/qemu;../slirp_glue/qemu/win32/include;../../windows-build/winpcap/Wpdpack/Include;../../windows-build/PCRE/include/;../../windows-build/pthreads;../../windows-build/libSDL/SDL2-2.0.8/include;../../windows-build/libpng-1.6.18"
-				PreprocessorDefinitions="HAVE_INT64;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;SIM_NEED_GIT_COMMIT_ID;HAVE_PCREPOSIX_H;PCRE_STATIC"
+				AdditionalIncludeDirectories="../HP2100/;./;../;../slirp;../slirp_glue;../slirp_glue/qemu;../slirp_glue/qemu/win32/include;../../windows-build/include;;../../windows-build/include/SDL2"
+				PreprocessorDefinitions="HAVE_INT64;SIM_BUILD_TOOL=simh-Visual-Studio-Project;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;SIM_NEED_GIT_COMMIT_ID;HAVE_PCRE_H;PCRE_STATIC"
 				StringPooling="true"
 				RuntimeLibrary="0"
 				EnableFunctionLevelLinking="true"
@@ -233,6 +232,14 @@
 				>
 			</File>
 			<File
+				RelativePath="..\HP2100\hp2100_cpu_fp.c"
+				>
+			</File>
+			<File
+				RelativePath="..\HP2100\hp2100_cpu_fpp.c"
+				>
+			</File>
+			<File
 				RelativePath="..\HP2100\hp2100_di.c"
 				>
 			</File>
@@ -242,6 +249,10 @@
 			</File>
 			<File
 				RelativePath="..\HP2100\hp2100_disclib.c"
+				>
+			</File>
+			<File
+				RelativePath="..\HP2100\hp2100_dma.c"
 				>
 			</File>
 			<File
@@ -261,14 +272,6 @@
 				>
 			</File>
 			<File
-				RelativePath="..\HP2100\hp2100_fp.c"
-				>
-			</File>
-			<File
-				RelativePath="..\HP2100\hp2100_fp1.c"
-				>
-			</File>
-			<File
 				RelativePath="..\HP2100\hp2100_ipl.c"
 				>
 			</File>
@@ -278,6 +281,14 @@
 			</File>
 			<File
 				RelativePath="..\HP2100\hp2100_lpt.c"
+				>
+			</File>
+			<File
+				RelativePath="..\HP2100\hp2100_mc.c"
+				>
+			</File>
+			<File
+				RelativePath="..\HP2100\hp2100_mem.c"
 				>
 			</File>
 			<File
@@ -301,11 +312,19 @@
 				>
 			</File>
 			<File
-				RelativePath="..\HP2100\hp2100_stddev.c"
+				RelativePath="..\HP2100\hp2100_pt.c"
 				>
 			</File>
 			<File
 				RelativePath="..\HP2100\hp2100_sys.c"
+				>
+			</File>
+			<File
+				RelativePath="..\HP2100\hp2100_tbg.c"
+				>
+			</File>
+			<File
+				RelativePath="..\HP2100\hp2100_tty.c"
 				>
 			</File>
 			<File
@@ -363,6 +382,10 @@
 			</File>
 			<File
 				RelativePath="..\HP2100\hp2100_cpu1.h"
+				>
+			</File>
+			<File
+				RelativePath="..\HP2100\hp2100_cpu_fp.h"
 				>
 			</File>
 			<File

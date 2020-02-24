@@ -40,7 +40,7 @@
 
 #include "vax_defs.h"
 
-#if defined (FULL_VAX)
+#if defined (CMPM_VAX)
 
 #define RdMemB(a)       Read (a, L_BYTE, RA)
 #define RdMemMB(a)      Read (a, L_BYTE, WA)
@@ -1308,7 +1308,7 @@ return TRUE;                                            /* always bad */
 
 int32 op_cmode (int32 cc)
 {
-RSVD_INST_FAULT;
+RSVD_INST_FAULT(0);
 return cc;
 }
 

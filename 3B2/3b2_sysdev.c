@@ -433,8 +433,14 @@ REG timer_reg[] = {
     { NULL }
 };
 
+MTAB timer_mod[] = {
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR|MTAB_NC, 0, NULL, "SHUTDOWN",
+      &timer_set_shutdown, NULL, NULL, "Soft Power Shutdown" },
+    { 0 }
+};
+
 DEVICE timer_dev = {
-    "TIMER", timer_unit, timer_reg, NULL,
+    "TIMER", timer_unit, timer_reg, timer_mod,
     1, 16, 8, 4, 16, 32,
     NULL, NULL, &timer_reset,
     NULL, NULL, NULL, NULL,
@@ -454,7 +460,7 @@ t_stat timer_reset(DEVICE *dptr) {
 
     for (i = 0; i < 3; i++) {
         timer_unit[i].tmrnum = i;
-        timer_unit[i].tmr = &TIMERS[i];
+        timer_unit[i].tmr = (void *)&TIMERS[i];
     }
 
     /* Timer 1 gate is always active */
@@ -468,6 +474,23 @@ t_stat timer_reset(DEVICE *dptr) {
     return SCPE_OK;
 }
 
+t_stat timer_set_shutdown(UNIT *uptr, int32 val, CONST char* cptr, void* desc)
+{
+    struct timer_ctr *sanity = (struct timer_ctr *)timer_unit[0].tmr;
+
+    sim_debug(EXECUTE_MSG, &timer_dev,
+              "[%08x] Setting sanity timer to 0 for shutdown.\n", R[NUM_PC]);
+
+    sanity->val = 0;
+    csr_data &= ~CSRCLK;
+    csr_data |= CSRTIMO;
+
+    return SCPE_OK;
+}
+
+/*
+ * Sanity Timer
+ */
 t_stat timer0_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;
@@ -486,6 +509,9 @@ t_stat timer0_svc(UNIT *uptr)
     return SCPE_OK;
 }
 
+/*
+ * Interval Timer
+ */
 t_stat timer1_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;
@@ -505,6 +531,9 @@ t_stat timer1_svc(UNIT *uptr)
     return SCPE_OK;
 }
 
+/*
+ * Bus Timeout Timer
+ */
 t_stat timer2_svc(UNIT *uptr)
 {
     struct timer_ctr *ctr;

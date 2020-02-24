@@ -262,10 +262,11 @@ static void ctc_cmd(uint8 cid,
                     cio_entry *cqe, uint8 *capp_data)
 {
     uint32 vtoc_addr, pdinfo_addr, ctjob_addr;
-    uint32 maxpass, blkno, delay;
-    uint8  dev;
-    uint8  sec_buf[512];
+    uint32 maxpass, blkno, delay, last_byte;
+    uint8  dev, c;
+    uint8  sec_buf[VTOC_SECSZ];
     int32  b, i, j;
+    int32 block_count, read_bytes, remainder, dest;
     t_seccnt secrw = 0;
     struct vtoc vtoc = {{0}};
     struct pdinfo pdinfo = {0};
@@ -335,9 +336,10 @@ static void ctc_cmd(uint8 cid,
                   "[ctc_cmd] CTC_DSD (%d)\n",
                   rqe->opcode);
         delay = DELAY_DSD;
-        /* The system wants us to write sub-device structures at the
-         * supplied address, but we have nothing to write. */
-        pwrite_h(rqe->address, 0x0);
+        /* Write subdevice information to the host. */
+        pwrite_h(rqe->address, CTC_NUM_SD);
+        pwrite_h(rqe->address + 2, CTC_SD_FT25);
+        pwrite_h(rqe->address + 4, CTC_SD_FD5);
         cqe->opcode = CTC_SUCCESS;
         break;
     case CTC_FORMAT:
@@ -417,6 +419,7 @@ static void ctc_cmd(uint8 cid,
         delay = DELAY_OPEN;
 
         ctc_state[dev].time = 0;  /* Opening always resets session time to 0 */
+        ctc_state[dev].bytnum = 0;
 
         vtoc_addr = rqe->address;
         pdinfo_addr = ATOW(rapp_data, 4);
@@ -494,11 +497,11 @@ static void ctc_cmd(uint8 cid,
 
         blkno = ATOW(rapp_data, 0);
 
-        for (b = 0; b < rqe->byte_count / 512; b++) {
+        for (b = 0; b < rqe->byte_count / VTOC_SECSZ; b++) {
             ctc_state[dev].time += 10;
-            for (j = 0; j < 512; j++) {
+            for (j = 0; j < VTOC_SECSZ; j++) {
                 /* Fill the buffer */
-                sec_buf[j] = pread_b(rqe->address + (b * 512) + j);
+                sec_buf[j] = pread_b(rqe->address + (b * VTOC_SECSZ) + j);
             }
             lba = blkno + b;
             result = sim_disk_wrsect(&ctc_unit, lba, sec_buf, &secrw, 1);
@@ -522,6 +525,7 @@ static void ctc_cmd(uint8 cid,
         cqe->byte_count = rqe->byte_count;
         cqe->subdevice = rqe->subdevice;
         cqe->address = ATOW(rapp_data, 4);
+        dest = rqe->address;
 
         if (dev == XMF_DEV) {
             cqe->opcode = CTC_NOTREADY;
@@ -533,19 +537,70 @@ static void ctc_cmd(uint8 cid,
             break;
         }
 
+        /*
+         * This read routine supports both streaming and block
+         * oriented modes.
+         *
+         * Read requests from the host give a block number, and a
+         * number of bytes to read. In streaming mode, however, there
+         * is no requirement that the number of bytes to read has to
+         * be block-aligned, so we must support reading an arbitrary
+         * number of bytes from the tape stream and remembering the
+         * current position in the byte stream.
+         *
+         */
+
+        /* The block number to begin reading from is supplied in the
+         * request queue entry's APP_DATA field. */
         blkno = ATOW(rapp_data, 0);
 
-        for (b = 0; b < rqe->byte_count / 512; b++) {
+        /* Since we may start reading from the data stream at an
+         * arbitrary location, we compute the offset of the last byte
+         * to be read, and use that to figure out how many bytes will
+         * be left over to read from an "extra" block */
+        last_byte = ctc_state[dev].bytnum + rqe->byte_count;
+        remainder = last_byte % VTOC_SECSZ;
+
+        /* The number of blocks we have to read in total is computed
+         * by looking at the byte count, PLUS any remainder that will
+         * be left after crossing a block boundary */
+        block_count = rqe->byte_count / VTOC_SECSZ;
+        if (((rqe->byte_count % VTOC_SECSZ) > 0 || remainder > 0)) {
+            block_count++;
+        }
+
+        /* Now step over each block, and start reading from the
+         * necessary location. */
+        for (b = 0; b < block_count; b++) {
+            uint32 start_byte;
+            /* Add some read time to the read time counter */
             ctc_state[dev].time += 10;
+            start_byte = ctc_state[dev].bytnum % VTOC_SECSZ;
             lba = blkno + b;
             result = sim_disk_rdsect(&ctc_unit, lba, sec_buf, &secrw, 1);
             if (result == SCPE_OK) {
-                sim_debug(TRACE_DBG, &ctc_dev,
-                          "[ctc_cmd] ... CTC_READ: 512 bytes from block %d (0x%x)\n",
-                          lba, lba);
-                for (j = 0; j < 512; j++) {
+                /* If this is the last "extra" block, we will only
+                 * read the remainder of bytes from it. Otherwise, we
+                 * need to consume the whole block. */
+                if (b == (block_count - 1) && remainder > 0) {
+                    read_bytes = remainder;
+                } else {
+                    read_bytes = VTOC_SECSZ - start_byte;
+                }
+                for (j = 0; j < read_bytes; j++) {
+                    uint32 offset;
                     /* Drain the buffer */
-                    pwrite_b(rqe->address + (b * 512) + j, sec_buf[j]);
+                    if (b == 0 && (j + start_byte) < VTOC_SECSZ) {
+                        /* This is a partial read of the first block,
+                         * continuing to read from a previous partial
+                         * block read. */
+                        offset = j + start_byte;
+                    } else {
+                        offset = j;
+                    }
+                    c = sec_buf[offset];
+                    pwrite_b(dest++, c);
+                    ctc_state[dev].bytnum++;
                 }
             } else {
                 sim_debug(TRACE_DBG, &ctc_dev,
@@ -728,7 +783,7 @@ t_stat ctc_svc(UNIT *uptr)
 
 t_stat ctc_attach(UNIT *uptr, CONST char *cptr)
 {
-    return sim_disk_attach(uptr, cptr, 512, 1, TRUE, 0, "CIPHER23", 0, 0);
+    return sim_disk_attach(uptr, cptr, VTOC_SECSZ, 1, TRUE, 0, "CIPHER23", 0, 0);
 }
 
 t_stat ctc_detach(UNIT *uptr)

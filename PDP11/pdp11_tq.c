@@ -502,8 +502,8 @@ MTAB tq_mod[] = {
         NULL, &tq_show_ctrl, NULL, "Display complete controller state" },
     { MTAB_XTD|MTAB_VUN|MTAB_NMO, 0,        "UNITQ", NULL,
         NULL, &tq_show_unitq, NULL, "Display unit queue" },
-    { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0,       "FORMAT", "FORMAT",
-        &sim_tape_set_fmt, &sim_tape_show_fmt, NULL, "Set/Display tape format (SIMH, E11, TPC, P7B)" },
+    { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT",
+        &sim_tape_set_fmt, &sim_tape_show_fmt, NULL, "Set/Display tape format (SIMH, E11, TPC, P7B, AWS, TAR)" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0,       "CAPACITY", "CAPACITY",
         &sim_tape_set_capac, &sim_tape_show_capac, NULL, "Set/Display capacity" },
 #if defined (VM_PDP11)
@@ -1209,8 +1209,13 @@ if ((uptr = tq_getucb (lu))) {                          /* unit exist? */
     if (sts == ST_SUC) {                                /* ok? */
         uptr->cpkt = pkt;                               /* op in progress */
         if ((tq_pkt[pkt].d[CMD_MOD] & MD_RWD) &&        /* rewind? */
-            (!(tq_pkt[pkt].d[CMD_MOD] & MD_IMM)))       /* !immediate? */
-            sim_activate_after (uptr, 2000000);         /* use 2 sec rewind execute time */
+            (!(tq_pkt[pkt].d[CMD_MOD] & MD_IMM))) {     /* !immediate? */
+            double walltime = (tq_rwtime - 100);
+
+            if (uptr->hwmark)
+                walltime *= ((double)uptr->pos)/uptr->hwmark;
+            sim_activate_after_d (uptr, 100 + walltime);/* use scaled 2 sec rewind execute time */
+            }
         else {                                          /* otherwise */
             uptr->iostarttime = sim_grtime();
             sim_activate (uptr, 0);                     /* use normal execute time */
@@ -1503,8 +1508,6 @@ t_stat tq_mot_err (UNIT *uptr, uint32 rsiz)
 uptr->flags = (uptr->flags | UNIT_SXC) & ~UNIT_TMK;     /* serious exception */
 if (tq_dte (uptr, ST_DRV))                              /* post err log */
     tq_mot_end (uptr, EF_LOG, ST_DRV, rsiz);            /* if ok, report err */
-sim_perror ("TQ I/O error");
-clearerr (uptr->fileref);
 return SCPE_IOERR;
 }
 
@@ -2006,7 +2009,7 @@ void tq_ring_int (struct uq_ring *ring)
 uint32 iadr = tq_comm + ring->ioff;                     /* addr intr wd */
 uint16 flag = 1;
 
-Map_WriteW (iadr, 2, &flag);                            /* write flag */
+(void)Map_WriteW (iadr, 2, &flag);                      /* write flag */
 if (tq_dib.vec)                                         /* if enb, intr */
     SET_INT (TQ);
 return;

@@ -161,7 +161,7 @@ static uint32 sca_state  = SCA_STATE_IDLE;
 static uint8  sichar     = 0;                               /* sync/idle character */
 static uint8  rcvd_char  = 0;                               /* most recently received character */
 static uint8  sca_frame  = 8;
-static char sca_port[CBUFSIZE];                             /* listening port */
+static char sca_port[3*CBUFSIZE];                             /* listening port */
 static int32  sca_keepalive = 0;                            /* keepalive SYN packet period in msec, default = 0 (disabled) */
 static SCA_TIMER_STATE sca_timer_state[3];                  /* current timer state */
 static int    sca_timer_endtime[3];                         /* clocktime when timeout is to occur if state is RUNNING */
@@ -295,7 +295,7 @@ char *mstring (const char *str)
 
 static void sca_socket_error (void)
 {
-    char name[100];
+    char name[4*CBUFSIZE];
 
     /* print diagnostic? */
     printf("SCA socket error, closing connection\n");
@@ -312,7 +312,8 @@ static void sca_socket_error (void)
             free(sca_unit.filename);
 
         if (sca_unit.flags & UNIT_LISTEN) {
-            sprintf(name, "(Listening on port %s)", sca_port);
+            name[sizeof (name) - 1] = '\0';
+            snprintf(name, sizeof (name) - 1, "(Listening on port %s)", sca_port);
             sca_unit.filename = mstring(name);
             printf("%s\n", name);
         }
@@ -451,7 +452,7 @@ static t_stat sca_attach (UNIT *uptr, CONST char *cptr)
 {
     char host[CBUFSIZE], port[CBUFSIZE];
     t_bool do_listen;
-    char name[CBUFSIZE];
+    char name[4*CBUFSIZE];
     t_stat r;
 
     do_listen = sim_switches & SWMASK('L');     /* -l means listen mode */
@@ -463,9 +464,9 @@ static t_stat sca_attach (UNIT *uptr, CONST char *cptr)
         if (sim_parse_addr (cptr, host, sizeof(host), NULL, port, sizeof(port), SCA_DEFAULT_PORT, NULL))
             return SCPE_ARG;
         if ((0 == strcmp(port, cptr)) && (0 == strcmp(port, "dummy")))
-            strcpy(port, SCA_DEFAULT_PORT);
+            strlcpy(port, SCA_DEFAULT_PORT, sizeof (port));
 
-        sprintf(sca_port, "%s%s%s:%s", strchr(host, ':') ? "[" : "", host, strchr(host, ':') ? "]" : "", port);
+        snprintf(sca_port, sizeof (sca_port) - 1, "%s%s%s:%s", strchr(host, ':') ? "[" : "", host, strchr(host, ':') ? "]" : "", port);
 
         /* else if nondigits specified, ignore... but the command has to have something there otherwise the core scp */
         /* attach_cmd() routine complains "too few arguments". */
@@ -478,7 +479,8 @@ static t_stat sca_attach (UNIT *uptr, CONST char *cptr)
         
         SETBIT(sca_unit.flags, UNIT_LISTEN);    /* note that we are listening, not yet connected */
 
-        sprintf(name, "(Listening on port %s)", sca_port);
+        name[sizeof (name) - 1] = '\0';
+        snprintf(name, sizeof (name) - 1, "(Listening on port %s)", sca_port);
         sca_unit.filename = mstring(name);
         printf("%s\n", sca_unit.filename);
 
@@ -493,11 +495,11 @@ static t_stat sca_attach (UNIT *uptr, CONST char *cptr)
         if (sim_parse_addr (cptr, host, sizeof(host), NULL, port, sizeof(port), SCA_DEFAULT_PORT, NULL))
             return SCPE_ARG;
         if ((0 == strcmp(cptr, port)) && (0 == strcmp(host, ""))) {
-            strcpy(host, port);
-            strcpy(port, SCA_DEFAULT_PORT);
+            strlcpy(host, port, sizeof (host));
+            strlcpy(port, SCA_DEFAULT_PORT, sizeof (port));
         }
 
-        sprintf(sca_port, "%s%s%s:%s", strchr(host, ':') ? "[" : "", host, strchr(host, ':') ? "]" : "", port);
+        snprintf(sca_port, sizeof (sca_port) - 1, "%s%s%s:%s", strchr(host, ':') ? "[" : "", host, strchr(host, ':') ? "]" : "", port);
 
         if ((sca_sock = sim_connect_sock(sca_port, NULL, NULL)) == INVALID_SOCKET)
             return SCPE_OPENERR;
@@ -511,7 +513,8 @@ static t_stat sca_attach (UNIT *uptr, CONST char *cptr)
             sim_os_ms_sleep(1000);
 
         if (1 == sim_check_conn(sca_sock, 0)) { /* sca_sock appears in "writable" set -- connect completed */
-            sprintf(name, "%s%s%s:%s", strchr(host, ':') ? "[" : "", host, strchr(host, ':') ? "]" : "", port);
+            name[sizeof (name) - 1] = '\0';
+            snprintf(name, sizeof (name) - 1, "%s%s%s:%s", strchr(host, ':') ? "[" : "", host, strchr(host, ':') ? "]" : "", port);
             sca_unit.filename = mstring(name);
             SETBIT(sca_dsw, SCA_DSW_READY);
         }

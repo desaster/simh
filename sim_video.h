@@ -180,9 +180,13 @@ t_stat vid_open (DEVICE *dptr, const char *title, uint32 width, uint32 height, i
                                                             /* code responsible for cursor display in video) */
 typedef void (*VID_QUIT_CALLBACK)(void);
 t_stat vid_register_quit_callback (VID_QUIT_CALLBACK callback);
+typedef void (*VID_GAMEPAD_CALLBACK)(int, int, int);
+t_stat vid_register_gamepad_motion_callback (VID_GAMEPAD_CALLBACK);
+t_stat vid_register_gamepad_button_callback (VID_GAMEPAD_CALLBACK);
 t_stat vid_close (void);
 t_stat vid_poll_kb (SIM_KEY_EVENT *ev);
 t_stat vid_poll_mouse (SIM_MOUSE_EVENT *ev);
+uint32 vid_map_rgb (uint8 r, uint8 g, uint8 b);
 void vid_draw (int32 x, int32 y, int32 w, int32 h, uint32 *buf);
 void vid_beep (void);
 void vid_refresh (void);
@@ -196,7 +200,6 @@ t_stat vid_show (FILE* st, DEVICE *dptr,  UNIT* uptr, int32 val, CONST char* des
 t_stat vid_screenshot (const char *filename);
 
 extern t_bool vid_active;
-extern uint32 vid_mono_palette[2];
 void vid_set_cursor_position (int32 x, int32 y);        /* cursor position (set by calling code) */
 
 /* A device simulator can optionally set the vid_display_kb_event_process
@@ -213,10 +216,10 @@ void vid_set_cursor_position (int32 x, int32 y);        /* cursor position (set 
  */
 extern int (*vid_display_kb_event_process)(SIM_KEY_EVENT *kev);
 
-#define SIM_VID_DBG_MOUSE   0x01000000
-#define SIM_VID_DBG_CURSOR  0x02000000
-#define SIM_VID_DBG_KEY     0x04000000
-#define SIM_VID_DBG_VIDEO   0x08000000
+#define SIM_VID_DBG_MOUSE   0x10000000
+#define SIM_VID_DBG_CURSOR  0x20000000
+#define SIM_VID_DBG_KEY     0x40000000
+#define SIM_VID_DBG_VIDEO   0x80000000
 
 #ifdef  __cplusplus
 }

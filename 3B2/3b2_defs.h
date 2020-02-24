@@ -56,6 +56,12 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #ifndef MIN
 #define MIN(x,y) ((x) < (y) ? (x) : (y))
 #endif
+#ifndef UNUSED
+#define UNUSED(x)  ((void)((x)))
+#endif
+
+#define UNIT_V_EXHALT   (UNIT_V_UF + 0)
+#define UNIT_EXHALT     (1u << UNIT_V_EXHALT)
 
 /* -t flag: Translate a virtual address */
 #define EX_T_FLAG 1 << 19
@@ -77,6 +83,12 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define HALF_MASK  0xffffu
 #define BYTE_MASK  0xff
 
+/*
+ * Custom t_stat
+ */
+
+#define SCPE_PEND     (SCPE_OK + 1)      /* CIO job already pending */
+#define SCPE_NOJOB    (SCPE_OK + 2)      /* No CIO job on the request queue */
 /*
  *
  * Physical memory in the 3B2 is arranged as follows:
@@ -122,7 +134,8 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define STOP_ESTK           6     /* Exception stack too deep */
 #define STOP_MMU            7     /* Unimplemented MMU Feature */
 #define STOP_POWER          8     /* System power-off */
-#define STOP_ERR            9     /* Other error */
+#define STOP_LOOP           9     /* Infinite loop stop */
+#define STOP_ERR           10     /* Other error */
 
 /* Exceptional conditions handled within the instruction loop */
 #define ABORT_EXC           1      /* CPU exception  */
@@ -141,15 +154,20 @@ noret __libc_longjmp (jmp_buf buf, int val);
 #define C_STACK_FAULT        9
 
 /* Debug flags */
-#define READ_MSG     0x001
-#define WRITE_MSG    0x002
-#define DECODE_MSG   0x004
-#define EXECUTE_MSG  0x008
-#define INIT_MSG     0x010
-#define IRQ_MSG      0x020
-#define IO_DBG       0x040
-#define TRACE_DBG    0x080
-#define ERR_MSG      0x100
+#define READ_MSG     0x0001
+#define WRITE_MSG    0x0002
+#define DECODE_MSG   0x0004
+#define EXECUTE_MSG  0x0008
+#define INIT_MSG     0x0010
+#define IRQ_MSG      0x0020
+#define IO_DBG       0x0040
+#define CIO_DBG      0x0080
+#define TRACE_DBG    0x0100
+#define CALL_DBG     0x0200
+#define PKT_DBG      0x0400
+#define ERR_MSG      0x0800
+#define CACHE_DBG    0x1000
+#define DECODE_DBG   0x2000
 
 /* Data types operated on by instructions. NB: These integer values
    have meaning when decoding instructions, so this is not just an
@@ -392,6 +410,11 @@ extern uint32 read_w(uint32 va, uint8 acc);
 extern void write_b(uint32 va, uint8 val);
 extern void write_h(uint32 va, uint16 val);
 extern void write_w(uint32 va, uint32 val);
+extern void pwrite_w(uint32 pa, uint32 val);
+extern uint32 pread_w(uint32 pa);
+
+/* global symbols from the MAU */
+extern t_stat mau_broadcast(uint32 cmd, uint32 src, uint32 dst);
 
 /* Globally scoped CPU functions */
 extern void cpu_abort(uint8 et, uint8 isc);

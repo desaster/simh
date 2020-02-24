@@ -44,10 +44,6 @@
 
 #include "altairz80_defs.h"
 
-#if defined (_WIN32)
-#include <windows.h>
-#endif
-
 #ifdef DBG_MSG
 #define DBG_PRINT(args) sim_printf args
 #else
@@ -279,9 +275,9 @@ static t_stat n8vem_detach(UNIT *uptr)
     sim_debug(VERBOSE_MSG, &n8vem_dev, "N8VEM: Detach %s.\n", i == 0 ? "ROM" : "RAM");
 
     /* rewind to the beginning of the file. */
-    sim_fseek(uptr->fileref, 0, SEEK_SET);
-
-    if(i == 0) { /* ROM */
+    if(sim_fseek(uptr->fileref, 0, SEEK_SET)) {
+        sim_debug(VERBOSE_MSG, &n8vem_dev, "N8VEM: Cannot write into %s image.\n", i == 0 ? "ROM" : "RAM");
+    } else if(i == 0) { /* ROM */
         /* Save the ROM back to disk if SAVEROM is set. */
         if(save_rom == 1) {
             sim_debug(VERBOSE_MSG, &n8vem_dev, "N8VEM: Writing %d bytes into ROM image.\n", N8VEM_ROM_SIZE);

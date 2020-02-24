@@ -177,6 +177,11 @@ uint16          ascii_to_hol[128] = {
 void
 vm_init(void) {
     int i;
+    static int initialized = 0;
+
+    if (initialized)
+        return;
+    initialized = 1;
     // Initialize vm memory to all plus zero 
     for(i = 0; i < MAXDRUMSIZE; i++) DRUM[i] = DRUM_NegativeZeroFlag[i] = 0;
     for(i = 0; i < 60; i++) IAS[i] = IAS_NegativeZeroFlag[i] = 0;
@@ -185,8 +190,6 @@ vm_init(void) {
     sim_vm_cmd = aux_cmds;                       /* set up the auxiliary command table */
 }
 
-
-void (*sim_vm_init) (void) = &vm_init;
 
 /* Load a card image file into memory.  */
 
@@ -832,7 +835,7 @@ static t_stat deck_split_cmd(CONST char *cptr)
         if (uptr == NULL)                                   /* valid unit? */
             return SCPE_NXUN;
         if ((uptr->flags & UNIT_ATT) == 0)                  /* attached? */
-            return SCPE_NOTATT;
+            return SCPE_UNATT;
         // get the file name
         strcpy(fn0, uptr->filename);
         sim_card_detach(uptr);                              // detach file from cdp device to be splitted

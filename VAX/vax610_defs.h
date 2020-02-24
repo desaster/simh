@@ -36,8 +36,16 @@
       2000 2000 - 3FFF FFFF             reserved
 */
 
-#ifdef FULL_VAX                                         /* subset VAX */
+#ifdef FULL_VAX                     /* subset VAX */
 #undef FULL_VAX
+#endif
+
+#ifdef CMPM_VAX
+#undef CMPM_VAX                     /* No Compatibility Mode */
+#endif
+
+#ifndef NOEXS_VAX
+#define NOEXS_VAX       1           /* No Extra String Instructions Implemented */
 #endif
 
 #ifndef VAX_610_DEFS_H_
@@ -46,7 +54,7 @@
 /* Microcode constructs */
 
 #define VAX610_SID      (7 << 24)                       /* system ID */
-#define VAX610_FLOAT    (1 << 16)                       /* floating point type */
+#define VAX610_FLOAT    (1 << 16)                       /* floating point type D=1, G=0 */
 #define VAX610_MREV     (5 << 8)                        /* microcode revision */
 #define VAX610_HWREV    1                               /* hardware revision */
 #define CON_HLTPIN      0x0200                          /* external CPU halt */
@@ -88,7 +96,13 @@
 #define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0, "LEDS", NULL,                               \
                               NULL, &cpu_show_leds, NULL, "Display the CPU LED values" },       \
                             { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={MicroVAX|VAXStation}",     \
-                              &cpu_set_model, &cpu_show_model, NULL, "Set/Show the simulator CPU Model" }
+                              &cpu_set_model, &cpu_show_model, NULL, "Set/Show the simulator CPU Model" },
+#define CPU_INSTRUCTION_SET (VAX_BASE | VAX_GFLOAT)
+#define CPU_INST_MODIFIERS  { MTAB_XTD|MTAB_VDV|MTAB_VALR|MTAB_NMO, 0, "INSTRUCTIONS", "INSTRUCTIONS={G-FLOAT|D-FLOAT}", \
+                              &vax610_set_instruction_set, NULL, NULL,                 "Set the CPU Instruction Set" },                    \
+                            { MTAB_XTD|MTAB_VDV, 0, "INSTRUCTIONS", NULL,                                                                    \
+                              NULL,                     &cpu_show_instruction_set, NULL, "Show the CPU Instruction Set (SHOW -V)" },
+t_stat vax610_set_instruction_set (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 
 /* QVSS memory space */
 
@@ -96,6 +110,10 @@
 #define QVMSIZE         (1u << QVMAWIDTH)               /* QVSS mem length */
 #define QVMAMASK        (QVMSIZE - 1)                   /* QVSS mem addr mask */
 #define QVMBASE         0x3C0000                        /* QVSS mem base */
+#define ADDR_IS_QVM(x)  (vc_buf &&                      \
+                         (((uint32) (x)) >= QVMBASE) && \
+                         (((uint32) (x)) < (QVMBASE + QVMSIZE)))
+extern uint32 *vc_buf;
 
 /* Memory */
 
@@ -123,8 +141,9 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 #define IOPAGESIZE      (1u << IOPAGEAWIDTH)            /* IO page length */
 #define IOPAGEMASK      (IOPAGESIZE - 1)                /* IO addr mask */
 #define IOPAGEBASE      0x20000000                      /* IO page base */
-#define ADDR_IS_IO(x)   ((((uint32) (x)) >= IOPAGEBASE) && \
-                        (((uint32) (x)) < (IOPAGEBASE + IOPAGESIZE)))
+#define ADDR_IS_IO(x)   ((ADDR_IS_QVM (x)) ||               \
+                         ((((uint32) (x)) >= IOPAGEBASE) && \
+                          (((uint32) (x)) < (IOPAGEBASE + IOPAGESIZE))))
 
 /* Other address spaces */
 
@@ -142,7 +161,8 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 #define LP_MBZ84_TEST(r)
 #define LP_MBZ92_TEST(r)
 
-#define MT_AST_TEST(r)  if ((r) > AST_MAX) RSVD_OPND_FAULT
+#define MT_AST_TEST(r)  if ((r) > AST_MAX) RSVD_OPND_FAULT(MT_AST_TEST)
+#define IDX_IMM_TEST
 
 /* Qbus I/O modes */
 

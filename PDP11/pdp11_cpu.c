@@ -265,6 +265,8 @@ typedef struct {
     uint16              psw;
     uint16              src;
     uint16              dst;
+    uint16              sp;
+    uint16              pad;
     uint16              inst[HIST_ILNT];
     } InstHistory;
 
@@ -1065,12 +1067,11 @@ while (reason == 0)  {
 
     reg_mods = 0;
     inst_pc = PC;
-    /* Save PSW also because condition codes need to be preserved.
-       We just save the whole PSW because that is sufficient (that
-       representation is up to date at this point).  If restoring is
-       needed, both the PSW and the components that need to be restored
-       are handled explicitly.  */
-    inst_psw = PSW;
+    /* Save PSW also because condition codes need to be preserved.  We
+       just save the whole PSW because that is sufficient.  If
+       restoring is needed, both the PSW and the components that need
+       to be restored are handled explicitly.  */
+    inst_psw = get_PSW ();
     saved_sim_interval = sim_interval;
     if (BPT_SUMM_PC) {                                  /* possible breakpoint */
         t_addr pa = relocR (PC | isenable);             /* relocate PC */
@@ -1098,6 +1099,7 @@ while (reason == 0)  {
             };
         hst_ent = &hst[hst_p];
         hst_ent->pc = PC | HIST_VLD;
+        hst_ent->sp = SP;
         hst_ent->psw = get_PSW ();
         hst_ent->src = 0;
         hst_ent->dst = 0;
@@ -3617,6 +3619,19 @@ else if (CPUT (HAS_STKLR)) {                            /* register limit? */
 return;                                                 /* no stack limit */
 }
 
+/*
+ * This sequence of instructions is a mix that mimics
+ * a resonable instruction set that is a close estimate
+ * to the normal calibrated result.
+ */
+
+static const char *pdp11_clock_precalibrate_commands[] = {
+    "-m 100 INC 120",
+    "-m 104 INC 122",
+    "-m 110 BR  100",
+    "PC 100",
+    NULL};
+
 /* Reset routine */
 
 t_stat cpu_reset (DEVICE *dptr)
@@ -3644,6 +3659,7 @@ if (M == NULL) {                    /* First time init */
                     SWMASK ('W')|SWMASK ('X');
     sim_brk_type_desc = cpu_breakpoints;
     sim_vm_is_subroutine_call = &cpu_is_pc_a_subroutine_call;
+    sim_clock_precalibrate_commands = pdp11_clock_precalibrate_commands;
     auto_config(NULL, 0);           /* do an initial auto configure */
     }
 pcq_r = find_reg ("PCQ", NULL, dptr);
@@ -3840,12 +3856,12 @@ else lnt = hst_lnt;
 di = hst_p - lnt;                                       /* work forward */
 if (di < 0)
     di = di + hst_lnt;
-fprintf (st, "PC     PSW     src    dst     IR\n\n");
+fprintf (st, "PC     SP     PSW     src    dst     IR\n\n");
 for (k = 0; k < lnt; k++) {                             /* print specified */
     h = &hst[(di++) % hst_lnt];                         /* entry pointer */
     if (h->pc & HIST_VLD) {                             /* instruction? */
         ir = h->inst[0];
-        fprintf (st, "%06o %06o|", h->pc & ~HIST_VLD, h->psw);
+        fprintf (st, "%06o %06o %06o|", h->pc & ~HIST_VLD, h->sp, h->psw);
         if (((ir & 0070000) != 0) ||                    /* dops, eis, fpp */
             ((ir & 0177000) == 0004000))                /* jsr */
             fprintf (st, "%06o %06o  ", h->src, h->dst);

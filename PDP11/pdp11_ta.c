@@ -186,8 +186,6 @@ MTAB ta_mod[] = {
         NULL, NULL, NULL, "Write enable tape drive" },
     { MTUF_WLK, MTUF_WLK, "write locked",  "LOCKED", 
         NULL, NULL, NULL, "Write lock tape drive"  },
-//    { MTAB_XTD|MTAB_VUN, 0, "FORMAT", "FORMAT",
-//      &sim_tape_set_fmt, &sim_tape_show_fmt, NULL },
     { MTAB_XTD|MTAB_VUN, 0, "CAPACITY", NULL,
       NULL, &sim_tape_show_capac, NULL, "Display tape capacity" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 020, "ADDRESS", "ADDRESS",
@@ -303,8 +301,9 @@ if ((fnc != TACS_REW) && !(flg & OP_WRI)) {             /* spc/read cmd? */
         }
     if ((old_ust ^ uptr->UST) == (UST_REV|UST_GAP)) {   /* reverse in gap? */
         if (uptr->UST)                                  /* skip file gap */
-            sim_tape_rdrecr (uptr, ta_xb, &t, TA_MAXFR);
-        else sim_tape_rdrecf (uptr, ta_xb, &t, TA_MAXFR);
+            (void)sim_tape_rdrecr (uptr, ta_xb, &t, TA_MAXFR);
+        else 
+            (void)sim_tape_rdrecf (uptr, ta_xb, &t, TA_MAXFR);
         if (DEBUG_PRS (ta_dev))
             fprintf (sim_deb, ">>TA skip gap: op=%o, old_sta = %o, pos=%d\n",
                      fnc, uptr->UST, uptr->pos);

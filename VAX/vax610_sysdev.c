@@ -66,8 +66,6 @@ const char *sysd_description (DEVICE *dptr);
 t_stat vax610_boot (int32 flag, CONST char *ptr);
 t_stat vax610_boot_parse (int32 flag, const char *ptr);
 
-extern int32 vc_mem_rd (int32 pa);
-extern void vc_mem_wr (int32 pa, int32 val, int32 lnt);
 extern int32 iccs_rd (void);
 extern int32 todr_rd (void);
 extern int32 rxcs_rd (void);
@@ -156,7 +154,7 @@ switch (rg) {
         break;
 
     case MT_SID:                                        /* SID */
-        val = (VAX610_SID | VAX610_FLOAT | VAX610_MREV | VAX610_HWREV);
+        val = (VAX610_SID | ((cpu_instruction_set & VAX_DFLOAT) ? VAX610_FLOAT: 0) | VAX610_MREV | VAX610_HWREV);
         break;
 
     case MT_NICR:                                       /* NICR */
@@ -184,7 +182,7 @@ switch (rg) {
         break;
 
     default:
-        RSVD_OPND_FAULT;
+        RSVD_OPND_FAULT(ReadIPR);
         }
 
 return val;
@@ -223,7 +221,7 @@ switch (rg) {
     case MT_CONISP:
     case MT_CONPC:
     case MT_CONPSL:                                     /* halt reg */
-        RSVD_OPND_FAULT;
+        RSVD_OPND_FAULT(WriteIPR);
 
     case MT_NICR:                                       /* NICR */
     case MT_ICR:                                        /* ICR */
@@ -249,7 +247,7 @@ switch (rg) {
         break;
 
     default:
-        RSVD_OPND_FAULT;
+        RSVD_OPND_FAULT(WriteIPR);
         }
 
 return;
@@ -265,12 +263,11 @@ return;
 struct reglink {                                        /* register linkage */
     uint32      low;                                    /* low addr */
     uint32      high;                                   /* high addr */
-    int32       (*read)(int32 pa);                      /* read routine */
+    int32       (*read)(int32 pa, int32 lnt);           /* read routine */
     void        (*write)(int32 pa, int32 val, int32 lnt); /* write routine */
     };
 
 struct reglink regtable[] = {
-    { QVMBASE, QVMBASE+QVMSIZE, &vc_mem_rd, &vc_mem_wr },
     { 0, 0, NULL, NULL }
     };
 
@@ -289,7 +286,7 @@ struct reglink *p;
 
 for (p = &regtable[0]; p->low != 0; p++) {
     if ((pa >= p->low) && (pa < p->high) && p->read)
-        return p->read (pa);
+        return p->read (pa, lnt);
     }
 MACH_CHECK (MCHK_READ);
 }
@@ -514,6 +511,21 @@ AP = 1;
 return SCPE_OK;
 }
 
+t_stat vax610_set_instruction_set (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
+{
+char gbuf[CBUFSIZE];
+
+if (!cptr || !*cptr)
+    return SCPE_ARG;
+
+get_glyph (cptr, gbuf, 0);
+if (MATCH_CMD(gbuf, "G-FLOAT") == 0)
+    return cpu_set_instruction_set (uptr, val, "G-FLOAT;NOD-FLOAT", NULL);
+if (MATCH_CMD(gbuf, "D-FLOAT") == 0)
+    return cpu_set_instruction_set (uptr, val, "D-FLOAT;NOG-FLOAT", NULL);
+return sim_messagef (SCPE_ARG, "Unknown/Unsupported instruction set: %s\n", gbuf);
+}
+
 /* SYSD reset */
 
 t_stat sysd_reset (DEVICE *dptr)
@@ -550,7 +562,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
     vc_dev.flags = vc_dev.flags & ~DEV_DIS;              /* enable QVSS */
     lk_dev.flags = lk_dev.flags & ~DEV_DIS;              /* enable keyboard */
     vs_dev.flags = vs_dev.flags & ~DEV_DIS;              /* enable mouse */
-    strcpy (sim_name, "VAXStation I (KA610)");
+    strcpy (sim_name, "VAXstation I (KA610)");
     reset_all (0);                                       /* reset everything */
 #else
     return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support\n");

@@ -403,7 +403,7 @@ t_stat ch_wr (int32 data, int32 PA, int32 access)
 t_stat ch_svc(UNIT *uptr)
 {
   sim_clock_coschedule (uptr, 1000);
-  tmxr_poll_conn (&ch_tmxr);
+  (void)tmxr_poll_conn (&ch_tmxr);
   if (ch_lines[0].conn)
     ch_receive ();
   return SCPE_OK;
@@ -411,7 +411,7 @@ t_stat ch_svc(UNIT *uptr)
 
 t_stat ch_attach (UNIT *uptr, CONST char *cptr)
 {
-  char linkinfo[256];
+  char *linkinfo;
   t_stat r;
 
   if (address == -1)
@@ -419,17 +419,21 @@ t_stat ch_attach (UNIT *uptr, CONST char *cptr)
   if (peer[0] == '\0')
     return sim_messagef (SCPE_2FARG, "Must set Chaosnet PEER \"SET CH PEER=host:port\"\n");
 
+  linkinfo = (char *)calloc (100 + strlen (cptr) + strlen (peer), sizeof (*linkinfo));
+  if (linkinfo == NULL)
+      return SCPE_MEM;
   sprintf (linkinfo, "Buffer=%d,Line=%d,UDP,%s,PACKET,Connect=%s",
-           (int)sizeof tx_buffer, 0, cptr, peer);
+           (int)sizeof (tx_buffer), 0, cptr, peer);
   r = tmxr_attach (&ch_tmxr, uptr, linkinfo);
+  free (linkinfo);
   if (r != SCPE_OK) {
     sim_debug (DBG_ERR, &ch_dev, "TMXR error opening master\n");
-    return sim_messagef (r, "Error Opening: %s\n", peer);
+    return sim_messagef (r, "Error Opening connection to: %s, using: %s\n", peer, cptr);
   }
 
+  sim_clock_coschedule (uptr, 1000);        /* make sure polling starts */
   uptr->filename = (char *)realloc (uptr->filename, 1 + strlen (cptr));
   strcpy (uptr->filename, cptr);
-  sim_clock_coschedule (uptr, 1000);
   return SCPE_OK;
 }
 
@@ -442,7 +446,20 @@ t_stat ch_detach (UNIT *uptr)
 
 t_stat ch_reset (DEVICE *dptr)
 {
+  DEVICE *ng_dptr = find_dev ("NG");
+
+  if ((ng_dptr != NULL) && 
+      !(ng_dptr->flags & DEV_DIS) &&
+      !(dptr->flags & DEV_DIS)) {
+    dptr->flags |= DEV_DIS;
+    return sim_messagef (SCPE_ALATT, "CH device in conflict with NG.\n");
+  }
+
   ch_clear ();
+
+  if (dptr->units->flags & UNIT_ATT)
+    sim_clock_coschedule (dptr->units, 1000);   /* poll for connections */
+
   return auto_config (dptr->name, (dptr->flags & DEV_DIS)? 0 : 1);  /* auto config */
 }
 
@@ -465,7 +482,7 @@ t_stat ch_set_peer (UNIT* uptr, int32 val, CONST char* cptr, void* desc)
   if (host[0] == '\0')
     return SCPE_ARG;
 
-  strncpy (peer, cptr, sizeof peer);
+  strlcpy (peer, cptr, sizeof peer);
   return SCPE_OK;
 }
 

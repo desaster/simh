@@ -1,6 +1,6 @@
 /* vaxmod_defs.h: VAX model-specific definitions file
 
-   Copyright (c) 1998-2017, Robert M Supnik
+   Copyright (c) 1998-2019, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -23,6 +23,7 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
+   05-May-19    RMS     Added Qbus memory space to ADDR_IS_IO test
    18-May-17    RMS     Added model-specific AST validation test
    20-Dec-13    RMS     Added prototypes for unaligned IO and register handling
    11-Dec-11    RMS     Moved all Qbus devices to BR4; deleted RP definitions
@@ -67,8 +68,12 @@
         3400 0000 - 3FFF FFFF           reserved
 */
 
-#ifdef FULL_VAX                                         /* subset VAX */
+#ifdef FULL_VAX                     /* subset VAX */
 #undef FULL_VAX
+#endif
+
+#ifdef CMPM_VAX
+#undef CMPM_VAX                     /* No Compatibility Mode */
 #endif
 
 #ifndef VAXMOD_DEFS_H_
@@ -129,12 +134,12 @@
                         { UNIT_MSIZE, (1u << 29), NULL, "512M", &cpu_set_size, NULL, NULL, "Set Memory to 512M bytes" },            \
                         { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "MEMORY", NULL, NULL, &cpu_show_memory, NULL, "Display memory configuration" }
 extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
-#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={VAXServer|MicroVAX|VAXStation}",       \
+#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={VAXserver|MicroVAX|VAXstation}",       \
                               &cpu_set_model, &cpu_show_model, NULL, "Set/Display processor model" },       \
                             { MTAB_XTD|MTAB_VDV, 0,          "AUTOBOOT",   "AUTOBOOT",                      \
                               &sysd_set_halt, &sysd_show_halt, NULL, "Enable autoboot (Disable Halt)" },    \
                             { MTAB_XTD|MTAB_VDV|MTAB_NMO, 1, "NOAUTOBOOT", "NOAUTOBOOT",                    \
-                              &sysd_set_halt, &sysd_show_halt, NULL, "Disable autoboot (Enable Halt)" }
+                              &sysd_set_halt, &sysd_show_halt, NULL, "Disable autoboot (Enable Halt)" },
 
 
 /* Cache diagnostic space */
@@ -160,7 +165,7 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 #define IOPAGESIZE      (1u << IOPAGEAWIDTH)            /* IO page length */
 #define IOPAGEMASK      (IOPAGESIZE - 1)                /* IO addr mask */
 #define IOPAGEBASE      0x20000000                      /* IO page base */
-#define ADDR_IS_IO(x)   ((((uint32) (x)) >= IOPAGEBASE) && \
+#define ADDR_IS_IOP(x)  ((((uint32) (x)) >= IOPAGEBASE) && \
                         (((uint32) (x)) < (IOPAGEBASE + IOPAGESIZE)))
 
 /* Read only memory - appears twice */
@@ -224,14 +229,20 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 #define ADDR_IS_CQM(x)  ((((uint32) (x)) >= CQMBASE) && \
                         (((uint32) (x)) < (CQMBASE + CQMSIZE)))
 
+/* Reflect to IO on either IO space or Qbus memory */
+
+#define ADDR_IS_IO(x)   (ADDR_IS_IOP(x) || ADDR_IS_CQM(x))
+
 /* QVSS memory space */
 
 #define QVMAWIDTH       18                              /* QVSS mem addr width */
 #define QVMSIZE         (1u << QVMAWIDTH)               /* QVSS mem length */
 #define QVMAMASK        (QVMSIZE - 1)                   /* QVSS mem addr mask */
 #define QVMBASE         (CQMBASE + CQMSIZE - QVMSIZE)   /* QVSS mem base - end of Qbus memory space */
-#define ADDR_IS_QVM(x)  ((((uint32) (x)) >= QVMBASE) && \
-                        (((uint32) (x)) < (QVMBASE + QVMSIZE)))
+#define ADDR_IS_QVM(x)  (vc_buf &&                      \
+                         (((uint32) (x)) >= QVMBASE) && \
+                         (((uint32) (x)) < (QVMBASE + QVMSIZE)))
+extern uint32 *vc_buf;
 
 /* Machine specific reserved operand tests (mostly NOPs) */
 
@@ -243,7 +254,7 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc
 #define LP_MBZ84_TEST(r)
 #define LP_MBZ92_TEST(r)
 
-#define MT_AST_TEST(r)  if ((r) > AST_MAX) RSVD_OPND_FAULT
+#define MT_AST_TEST(r)  if ((r) > AST_MAX) RSVD_OPND_FAULT(MT_AST_TEST)
 
 
 /* Qbus I/O modes */

@@ -2,6 +2,7 @@
 
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
 [![Build Status](https://travis-ci.org/simh/simh.svg)](https://travis-ci.org/simh/simh)
+[![AppVeyor](https://ci.appveyor.com/api/projects/status/github/simh/simh)](https://ci.appveyor.com/project/simh/simh/history)
 
 ## Table of Contents:
 [WHAT'S NEW since simh v3.9](#whats-new-since-simh-v39)  
@@ -10,6 +11,7 @@
 . . [New Functionality](#new-functionality)  
 . . . . [Remote Console Facility](#remote-console-facility)  
 . . . . [VAX/PDP11 Enhancements](#vaxpdp11-enhancements)  
+. . . . [PDP11 Specific Enhancements](#pdp11-specific-enhancements)  
 . . . . [PDP10 Enhancements](#pdp10-enhancements)  
 . . . . [SDS 940 Enhancements](#sds-940-enhancements)  
 . . . . [Terminal Multiplexer additions](#terminal-multiplexer-additions)  
@@ -37,8 +39,8 @@
 . . . . . . . . . . [Linux - Dependencies](#linux---dependencies)  
 . . . . . . [Windows](#windows)  
 . . . . . . . . [Required related files](#required-related-files)  
-. . . . . . . . [Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015](#visual-studio-standard-or-express-2008-2010-2012-2013-or-visual-studio-community-2015)  
-. . . . . . . . [MinGW](#mingw)  
+. . . . . . . . [Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015, 2017, 2019](#visual-studio-standard-or-express-2008-2010-2012-2013-or-visual-studio-community-2015-2017-2019)  
+. . . . . . . . [MinGW32](#mingw32)  
 . . . . . . [VMS](#vms)  
 . . [Problem Reports](#problem-reports)  
 
@@ -52,13 +54,26 @@
 
 #### Matt Burke has implemented new VAX model simulators:
 
-    VAX/11 730
-    VAX/11 750
+    VAX-11/730
+    VAX-11/750
+    VAX 8200/8250
     VAX 8600/8650
-    MicroVAX I & VAXStation I
-    MicroVAX II & VAXStation II
+    MicroVAX I & VAXstation I
+    MicroVAX II & VAXstation II & VAXstation II/GPX
     rtVAX 1000 (or Industrial VAX 620)
-    
+    MicroVAX 2000 & VAXstation 2000
+    MicroVAX 3100 M10/M20
+    MicroVAX 3100 M10e/M20e
+    InfoServer 100
+    InfoServer 150 VXT
+    VAXstation 3100 M30
+    VAXstation 3100 M38
+    VAXstation 3100 M76
+    VAXstation 4000 VLC
+    VAXstation 4000 M60
+    MicroVAX 3100 M80
+    InfoServer 1000
+
 #### Howard Harte has implemented a Lincoln Labs TX-0 simulator.
 
 #### Gerardo Ospina has implemented a Manchester University SSEM (Small Scale Experimental Machine) simulator.
@@ -66,6 +81,8 @@
 #### Richard Cornwell has implemented a Burroughs B5500.
 
 #### Richard Cornwell has implemented the IBM 701, IBM 704, IBM 7010/1410, IBM 7070/7074, IBM 7080/702/705/7053 and IBM 7090/7094/709/704 simulators.
+
+#### Richard Cornwell has implemented the PDP6, PDP10-KA, and PDP10-KI simulators.
 
 #### Dave Bryan has implemented an HP-3000 Series III simulator.
 
@@ -128,9 +145,14 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
         when packets arrive too fast.
     MicroVAX 3900 has QVSS (VCB01) board available.
     MicroVAX 3900 and MicroVAX II have SET CPU AUTOBOOT option
-    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXServer|VAXStation) command to change between system types
+    MicroVAX 3900 has a SET CPU MODEL=(MicroVAX|VAXserver|VAXstation) command to change between system types
     MicroVAX I has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
     MicroVAX II has a SET CPU MODEL=(MicroVAX|VAXSTATION) command to change between system types
+
+#### PDP11 Specific Enhancements
+    ROM (from Lars Brinkhoff) I/O page ROM support
+    NG (from Lars Brinkhoff) Knight vector display
+    DAZ (from Lars Brinkhoff) Dazzle Dart Input device
 
 #### PDP10 Enhancements
     KDP11 (from Timothe Litt) for DECnet connectivity to simulators with DMC, DUP or KDP devices
@@ -160,9 +182,9 @@ A remote console session will close when an EOF character is entered (i.e. ^D or
     Input character rates reflect the natural character arrival time based on the line speed.
 
 #### Video Display Capabilities
-Added support for monochrome displays with optional keyboards and mice.  
-The VAXstation QVSS device (VCB01) simulation uses this capability.
-Host platforms which have libSDL available can leverage this functionality.
+Added support for monochrome and color displays with optional keyboards and mice.  
+The VAXstation QVSS device (VCB01) and QDSS device (VCB02) simulations use these capabilities.
+Host platforms which have libSDL2 available can leverage this functionality.
 
 #### Asynchronous I/O
     * Disk and Tape I/O can be asynchronous.  Asynchronous support exists 
@@ -206,6 +228,13 @@ Host platforms which have libSDL available can leverage this functionality.
 #### Disk Extensions
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
+    File System type detection to accurately autosize disks.
+    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, Ultrix Partitions
+
+#### Tape Extensions
+    AWS format tape support
+    TAR format tape support
+    ANSI-VMS, ANSI-RSX11, ANSI-RSTS, ANSI-RT11 format tape support
 
 #### Embedded ROM support
     Simulators which have boot commands which load constant files as part of 
@@ -376,6 +405,7 @@ Device simulator authors can easily schedule their device polling activities to 
     RUN UNTIL "output-string" ...    Establish the specified "output-string" as an EXPECT and run until it is encountered.
     GO UNTIL breakpoint              Establish the breakpoint specified and go until it is encountered
     GO UNTIL "output-string" ...     Establish the specified "output-string" as an EXPECT and go until it is encountered.
+    RUNLIMIT						 Bound simulator execution time
 
 #### Command Processing Enhancements
 
@@ -478,7 +508,15 @@ The makefile provided requires GNU make, which is the default make facility for 
 
 ##### Build Dependencies
 
-Some simulators depend on external packages to provide the full scope of functionality they may be simulating.  These additional external packages may or may not be included in as part of the standard Operating System distributions.  
+Some simulators depend on external packages to provide the full scope of 
+functionality they may be simulating.  These additional external packages 
+may or may not be included in as part of the standard Operating System 
+distributions.  If simulators are being built that could provide more 
+functionality than the currently installed packages will provide, the build
+will succeed with reduced functionality (i.e. limited network or no video
+support), but suggestions will be provided as to what could provide full 
+functionality.
+
 
 ###### OS X - Dependencies
 
@@ -514,13 +552,13 @@ Compiling on windows is supported with recent versions of Microsoft Visual Studi
 ##### Required related files
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt
 
-##### Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015
+##### Visual Studio (Standard or Express) 2008, 2010, 2012, 2013 or Visual Studio Community 2015, 2017, 2019
 
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using Visual Studio.
 
-##### MinGW
+##### MinGW32
 
-The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using MinGW.
+The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using MinGW32.
 
 #### VMS
 

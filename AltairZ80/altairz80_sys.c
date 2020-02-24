@@ -66,6 +66,8 @@ extern DEVICE switchcpu_dev;
 extern DEVICE adcs6_dev;
 extern DEVICE hdc1001_dev;
 
+extern DEVICE tarbell_dev;
+
 extern DEVICE cromfdc_dev;
 extern DEVICE wd179x_dev;
 extern DEVICE n8vem_dev;
@@ -115,6 +117,8 @@ DEVICE      *sim_devices[]  = {
     &mdsa_dev, &mdsad_dev,
     /* Seattle Computer Products Devices */
     &scp300f_dev,
+    /* Tarbell Devices */
+    &tarbell_dev,
     /* Vector Graphic Devices */
     &fw2_dev, &vfdhd_dev,
     /* Single-Board Computers */
@@ -427,11 +431,11 @@ static int32 DAsm(char *S, const uint32 *val, const int32 useZ80Mnemonics, const
         strncpy(R, T, T1 - T);
         R[T1 - T] = '\0';
         printHex2(H, val[B++]);
-        strcat(R, H);
-        strcat(R, T1 + 1); /* ok, since T1 is a short sub-string coming from one of the tables */
+        strlcat(R, H, sizeof (R));
+        strlcat(R, T1 + 1, sizeof (R)); /* ok, since T1 is a short sub-string coming from one of the tables */
     }
     else
-        strcpy(R, T); /* ok, since T is a short string coming from one of the tables */
+        strlcpy(R, T, sizeof (R)); /* ok, since T is a short string coming from one of the tables */
     if ( (P = strchr(R, '%')) ) {
         *P = C;
         if ( (P = strchr(P + 1, '%')) )

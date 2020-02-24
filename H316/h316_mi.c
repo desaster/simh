@@ -367,7 +367,7 @@ void mi_link_error (uint16 line)
   //   Any physical I/O error, either for the UDP link or a COM port, prints a
   // message and detaches the modem.  It's up to the user to decide what to do
   // after that...
-  fprintf(stderr,"MI%d - UNRECOVERABLE I/O ERROR!\n", line);
+  sim_printf("MI%d - UNRECOVERABLE I/O ERROR!\n", line);
   mi_reset_rx(line);  mi_reset_tx(line);
   sim_cancel(PUNIT(line));  mi_detach(PUNIT(line));
   PMIDB(line)->link = NOLINK;
@@ -630,6 +630,13 @@ int32 mi_io (uint16 line, int32 inst, int32 fnc, int32 dat, int32 dev)
   return IOBADFNC(dat);
 }
 
+
+
+////////////////////////////////////////////////////////////////////////////////
+///////////////////   H O S T   E V E N T   S E R V I C E   ////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+
 // Receiver service ...
 t_stat mi_rx_service (UNIT *uptr)
 {
@@ -693,10 +700,8 @@ t_stat mi_attach (UNIT *uptr, CONST char *cptr)
   if ((uptr->flags & UNIT_ATT) != 0) detach_unit(uptr);
 
   // The physical (COM port) attach isn't implemented yet ...
-  if (fport) {
-    fprintf(stderr,"MI%d - physical COM support is not yet implemented\n", line);
-    return SCPE_ARG;
-  }
+  if (fport)
+    return sim_messagef(SCPE_ARG,"MI%d - physical COM support is not yet implemented\n", line);
 
   //   Make a copy of the "file name" argument.  udp_create() actually modifies
   // the string buffer we give it, so we make a copy now so we'll have something
