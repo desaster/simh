@@ -1320,7 +1320,9 @@ PDP11 = ${PDP11D}/pdp11_fp.c ${PDP11D}/pdp11_cpu.c ${PDP11D}/pdp11_dz.c \
 	${PDP11D}/pdp11_vt.c ${PDP11D}/pdp11_td.c ${PDP11D}/pdp11_io_lib.c \
 	${PDP11D}/pdp11_rom.c ${PDP11D}/pdp11_ch.c ${DISPLAYL} ${DISPLAYVT} \
 	${PDP11D}/pdp11_ng.c ${PDP11D}/pdp11_daz.c ${DISPLAYNG} \
-	$(REALCONS) $(REALCONS_PDP11)
+	$(REALCONS) $(REALCONS_PDP11) \
+	${PDP11D}/pdp11_i2c.c ${PDP11D}/i2c/bmp180.c \
+	${PDP11D}/i2c/wiringPi.c ${PDP11D}/i2c/wiringPiI2C.c 
 PDP11_OPT = -DVM_PDP11 -I ${PDP11D} ${NETWORK_OPT} ${DISPLAY_OPT} ${REALCONS_OPT}
 
 
