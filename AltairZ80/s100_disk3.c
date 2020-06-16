@@ -173,7 +173,7 @@ extern uint32 PCX;
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 extern int32 find_unit_index(UNIT *uptr);
 extern void raise_ss1_interrupt(uint8 intnum);
 
@@ -204,28 +204,28 @@ static UNIT disk3_unit[] = {
 };
 
 static REG disk3_reg[] = {
-    { DRDATAD (NTRACKS,    ntracks,             10,
+    { DRDATAD (NTRACKS,    ntracks,                     10,
                "Number of tracks"),                             },
-    { DRDATAD (NHEADS,     nheads,              8,
+    { DRDATAD (NHEADS,     nheads,                      8,
                "Number of heads"),                              },
-    { DRDATAD (NSECTORS,   nsectors,            8,
+    { DRDATAD (NSECTORS,   nsectors,                    8,
                "Number of sectors per track"),                  },
-    { DRDATAD (SECTSIZE,   sectsize,            11,
+    { DRDATAD (SECTSIZE,   sectsize,                    11,
                "Sector size not including pre/postamble"),      },
-    { HRDATAD (SEL_DRIVE,  disk3_info_data.sel_drive, 3,
+    { HRDATAD (SEL_DRIVE,  disk3_info_data.sel_drive,   3,
                "Currently selected drive"),                     },
-    { HRDATAD (MODE,       disk3_info_data.mode,       8,
+    { HRDATAD (MODE,       disk3_info_data.mode,        8,
                "Mode (0xFF=absolute, 0x00=logical)"),           },
-    { HRDATAD (RETRIES,    disk3_info_data.retries,    8,
+    { HRDATAD (RETRIES,    disk3_info_data.retries,     8,
                "Number of retries to attempt"),                 },
-    { HRDATAD (NDRIVES,    disk3_info_data.ndrives,    8,
+    { HRDATAD (NDRIVES,    disk3_info_data.ndrives,     8,
                "Number of drives attached to the controller"),  },
-    { HRDATAD (LINK_ADDR,  disk3_info_data.link_addr, 32,
+    { HRDATAD (LINK_ADDR,  disk3_info_data.link_addr,   32,
                "Link address for next IOPB"),                   },
-    { HRDATAD (DMA_ADDR,   disk3_info_data.dma_addr,  32,
+    { HRDATAD (DMA_ADDR,   disk3_info_data.dma_addr,    32,
                "DMA address for the current IOPB"),             },
-    { BRDATAD (IOPB,       &disk3_info_data.iopb[DISK3_IOPB_CMD],  16, 8, 16,
-               "IOPB command register"), }                      ,
+    { BRDATAD (IOPB,       disk3_info_data.iopb,       16, 8, 16,
+               "IOPB command register"),                        },
     { NULL }
 };
 
@@ -253,7 +253,7 @@ static DEBTAB disk3_dt[] = {
     { "SEEK",       SEEK_MSG,       "Seek messages"     },
     { "CMD",        CMD_MSG,        "Command messages"  },
     { "READ",       RD_DATA_MSG,    "Read messages"     },
-    { "WRITE",      WR_DATA_MSG,     "Write messages"   },
+    { "WRITE",      WR_DATA_MSG,    "Write messages"    },
     { "IRQ",        IRQ_MSG,        "IRQ messages"      },
     { "VERBOSE",    VERBOSE_MSG,    "Verbose messages"  },
     { "SPECIFY",    SPECIFY_MSG,    "Specify messages"  },
@@ -275,10 +275,10 @@ static t_stat disk3_reset(DEVICE *dptr)
     PNP_INFO *pnp = (PNP_INFO *)dptr->ctxt;
 
     if(dptr->flags & DEV_DIS) { /* Disconnect I/O Ports */
-        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk3dev, TRUE);
+        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk3dev, "disk3dev", TRUE);
     } else {
         /* Connect DISK3 at base address */
-        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk3dev, FALSE) != 0) {
+        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk3dev, "disk3dev", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }

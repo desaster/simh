@@ -1,6 +1,6 @@
-/* ka10_cp.c: PDP10 Card Punch
+/* kx10_cp.c: PDP10 Card Punch
 
-   Copyright (c) 2016-2017, Richard Cornwell
+   Copyright (c) 2016-2020, Richard Cornwell
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -101,7 +101,7 @@ MTAB                cp_mod[] = {
 };
 
 REG                 cp_reg[] = {
-    {BRDATA(BUFF, cp_buffer, 16, 16, sizeof(cp_buffer)), REG_HRO},
+    {BRDATA(BUFF, cp_buffer, 16, 16, sizeof(cp_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };
 

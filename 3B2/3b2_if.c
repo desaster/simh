@@ -1,4 +1,4 @@
-/* 3b2_cpu.h: AT&T 3B2 Model 400 Floppy (TMS2797NL) Implementation
+/* 3b2_if.c: AT&T 3B2 Floppy Controller (TMS2797NL) Implementation
 
    Copyright (c) 2017, Seth J. Morabito
 
@@ -28,6 +28,7 @@
    from the author.
 */
 
+#include "3b2_defs.h"
 #include "3b2_if.h"
 
 /* Static function declarations */
@@ -161,7 +162,7 @@ t_stat if_reset(DEVICE *dptr)
 
 t_stat if_attach(UNIT *uptr, CONST char *cptr)
 {
-    return sim_disk_attach(uptr, cptr, 512, 1, TRUE, 0, "IF", 0, 0);
+    return sim_disk_attach(uptr, cptr, 512, 1, TRUE, 0, NULL, 0, 0);
 }
 
 t_stat if_detach(UNIT *uptr)

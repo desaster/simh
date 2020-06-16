@@ -1,6 +1,6 @@
-/* ka10_mt.c: TM10A/B Magnetic tape controller
+/* kx10_mt.c: TM10A/B Magnetic tape controller
 
-   Copyright (c) 2013-2017, Richard Cornwell
+   Copyright (c) 2013-2020, Richard Cornwell
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -197,7 +197,7 @@ MTAB                mt_mod[] = {
 };
 
 REG                 mt_reg[] = {
-    {BRDATA(BUFF, &mt_buffer[0], 16, 64, BUFFSIZE), REG_HRO},
+    {BRDATA(BUFF, mt_buffer, 16, 8, BUFFSIZE), REG_HRO},
     {ORDATA(PIA, mt_pia, 3)},
     {ORDATA(UNIT, mt_sel_unit, 3)},
     {ORDATA(NUNIT, mt_next_unit, 3)},

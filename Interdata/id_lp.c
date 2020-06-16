@@ -89,7 +89,7 @@ UNIT lpt_unit = { UDATA (&lpt_svc, UNIT_SEQ+UNIT_ATTABLE+UNIT_UC+UNIT_TEXT, 0) }
 REG lpt_reg[] = {
     { HRDATA (STA, lpt_sta, 8) },
     { HRDATA (BUF, lpt_unit.buf, 7) },
-    { BRDATA (DBUF, lpxb, 16, 7, LPT_WIDTH) },
+    { BRDATA (DBUF, lpxb, 16, 7, sizeof (lpxb)) },
     { HRDATA (DBPTR, lpt_bptr, 8) },
     { HRDATA (VFUP, lpt_vfup, 8) },
     { HRDATA (VFUL, lpt_vful, 8) },
@@ -285,6 +285,7 @@ return SCPE_OK;
 t_stat lpt_attach (UNIT *uptr, CONST char *cptr)
 {
 lpt_vfup = 0;                                           /* top of form */
+sim_switches |= SWMASK ('A');                           /* position to EOF */
 return attach_unit (uptr, cptr);
 }
 

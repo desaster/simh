@@ -1,6 +1,6 @@
-/* ka10_rc.c: RC10 Disk Controller.
+/* kx10_rc.c: RC10 Disk Controller.
 
-   Copyright (c) 2013-2017, Richard Cornwell
+   Copyright (c) 2013-2020, Richard Cornwell
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -163,7 +163,7 @@ MTAB                rc_mod[] = {
 };
 
 REG                 rca_reg[] = {
-    {BRDATA(BUFF, &rc_buf[0][0], 16, 64, RM10_WDS), REG_HRO},
+    {BRDATA(BUFF, rc_buf[0], 16, 64, RM10_WDS), REG_HRO},
     {ORDATA(IPR, rc_ipr[0], 2), REG_HRO},
     {ORDATA(STATUS, rc_df10[0].status, 18), REG_RO},
     {ORDATA(CIA, rc_df10[0].cia, 18)},
@@ -533,7 +533,7 @@ t_stat r;
 
 uptr->capac = rc_drv_tab[GET_DTYPE (uptr->flags)].size;
 r = attach_unit (uptr, cptr);
-if (r != SCPE_OK)
+if (r != SCPE_OK || (sim_switches & SIM_SW_REST) != 0)
     return r;
 uptr->CUR_CYL = 0;
 uptr->UFLAGS = 0;

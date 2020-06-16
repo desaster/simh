@@ -47,7 +47,7 @@ static const char* fif_description(DEVICE *dptr);
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 extern uint8 GetBYTEWrapper(const uint32 Addr);
 extern void  PutBYTEWrapper(const uint32 Addr, const uint32 Value);
 
@@ -93,7 +93,7 @@ static REG fif_reg[] = {
                "Current selected disk")                                                     },
     { DRDATAD (DSKWL,        warnLevelDSK, 32,
                "Warn level register")                                                       },
-    { BRDATAD (WARNATTACHED, warnAttached,   10, 32, NUM_OF_DSK,
+    { BRDATAD (WARNATTACHED, warnAttached,  10, 32, NUM_OF_DSK,
                "Count for selection of unattached disk register array"), REG_CIRC + REG_RO  },
     { DRDATAD (WARNDSK11,    warnDSK11, 4,
                "Count of IN/OUT(9) on unattached disk register"), REG_RO                    },
@@ -155,10 +155,10 @@ static t_stat fif_reset(DEVICE *dptr)
     current_disk = NUM_OF_DSK;
 
     if(dptr->flags & DEV_DIS) {
-        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &fif_io, TRUE);
+        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &fif_io, "fif_io", TRUE);
     } else {
         /* Connect HDSK at base address */
-        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &fif_io, FALSE) != 0) {
+        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &fif_io, "fif_io", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->mem_base);
             dptr->flags |= DEV_DIS;
             return SCPE_ARG;
@@ -221,7 +221,7 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
     if (current_disk >= NUM_OF_DSK) {
         if (hasVerbose() && (warnDSK11 < warnLevelDSK)) {
             warnDSK11++;
-/*03*/      sim_printf("FIF%i: " ADDRESS_FORMAT " Attempt disk io on illegal disk %d - ignored." NLP, current_disk, PCX, current_disk);
+/*03*/      sim_printf("FIF%i: " ADDRESS_FORMAT " Attempt disk io on illegal disk %d - ignored.\n", current_disk, PCX, current_disk);
         }
         return 0;               /* no drive selected - can do nothing */
     }
@@ -229,7 +229,7 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
     if ((current_disk_flags & UNIT_ATT) == 0) { /* nothing attached? */
         if ((current_disk_flags & UNIT_DSK_VERBOSE) && (warnAttached[current_disk] < warnLevelDSK)) {
             warnAttached[current_disk]++;
-/*02*/sim_printf("FIF%i: " ADDRESS_FORMAT " Attempt to select unattached FIF%d - ignored." NLP, current_disk, PCX, current_disk);
+/*02*/sim_printf("FIF%i: " ADDRESS_FORMAT " Attempt to select unattached FIF%d - ignored.\n", current_disk, PCX, current_disk);
         }
         current_disk = NUM_OF_DSK;
         return 2;
@@ -254,7 +254,7 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
                 if ((current_disk_flags & UNIT_DSK_VERBOSE) &&
                     (warnAttached[current_disk] < warnLevelDSK)) {
                     warnAttached[current_disk]++;
-                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error." NLP, current_disk, PCX);
+                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error.\n", current_disk, PCX);
                 }
             }
             break;
@@ -266,7 +266,7 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
                 if ((rtn != SEC_SZ) && (current_disk_flags & UNIT_DSK_VERBOSE) &&
                     (warnAttached[current_disk] < warnLevelDSK)) {
                 warnAttached[current_disk]++;
-                sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fread error." NLP, current_disk, PCX);
+                sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fread error.\n", current_disk, PCX);
             }
             addr = dsc->addr_l + (dsc->addr_h << 8); /* no assumption on endianness */
             for (kt = 0; kt < SEC_SZ; kt++) {
@@ -276,7 +276,7 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
                 if ((current_disk_flags & UNIT_DSK_VERBOSE) &&
                     (warnAttached[current_disk] < warnLevelDSK)) {
                     warnAttached[current_disk]++;
-                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error." NLP, current_disk, PCX);
+                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error.\n", current_disk, PCX);
                 }
             }
             break;
@@ -293,7 +293,7 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
                 if ((current_disk_flags & UNIT_DSK_VERBOSE) &&
                     (warnAttached[current_disk] < warnLevelDSK)) {
                     warnAttached[current_disk]++;
-                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error." NLP, current_disk, PCX);
+                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error.\n", current_disk, PCX);
                 }
             }
             break;

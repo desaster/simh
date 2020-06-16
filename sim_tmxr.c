@@ -1038,7 +1038,8 @@ if (mp->last_poll_time == 0) {                          /* first poll initializa
         }
     }
 
-if ((poll_time - mp->last_poll_time) < mp->poll_interval*1000)
+if (sim_is_running && 
+    ((poll_time - mp->last_poll_time) < mp->poll_interval*1000))
     return -1;                                          /* too soon to try */
 
 srand((unsigned int)poll_time);
@@ -1284,7 +1285,8 @@ for (i = 0; i < mp->lines; i++) {                       /* check each line in se
         (!lp->modem_control || (lp->modembits & TMXR_MDM_DTR))) {
         snprintf (msg, sizeof (msg) - 1, "tmxr_poll_conn() - establishing outgoing connection to: %s", lp->destination);
         tmxr_debug_connect_line (lp, msg);
-        lp->connecting = sim_connect_sock_ex (lp->datagram ? lp->port : NULL, lp->destination, "localhost", NULL, (lp->datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | (lp->mp->packet ? SIM_SOCK_OPT_NODELAY : 0));
+        lp->connecting = sim_connect_sock_ex (lp->datagram ? lp->port : NULL, lp->destination, "localhost", NULL, (lp->datagram ? SIM_SOCK_OPT_DATAGRAM : 0)  | 
+                                                                                                                  (lp->mp->packet ? SIM_SOCK_OPT_NODELAY : 0));
         }
 
     }
@@ -1354,7 +1356,8 @@ if ((lp->destination) && (!lp->serport)) {
     if ((!lp->modem_control) || (lp->modembits & TMXR_MDM_DTR)) {
         sprintf (msg, "tmxr_reset_ln_ex() - connecting to %s", lp->destination);
         tmxr_debug_connect_line (lp, msg);
-        lp->connecting = sim_connect_sock_ex (lp->datagram ? lp->port : NULL, lp->destination, "localhost", NULL, (lp->datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | (lp->packet ? SIM_SOCK_OPT_NODELAY : 0));
+        lp->connecting = sim_connect_sock_ex (lp->datagram ? lp->port : NULL, lp->destination, "localhost", NULL, (lp->datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | 
+                                                                                                                  (lp->packet ? SIM_SOCK_OPT_NODELAY : 0));
         }
     }
 tmxr_init_line (lp);                                /* initialize line state */
@@ -1617,9 +1620,9 @@ if ((lp->modembits != before_modem_bits) && (sim_deb && lp->mp && dptr)) {
     sim_debug (TMXR_DBG_MDM, dptr, " - Line %d - %p\n", (int)(lp-lp->mp->ldsc), lp->txb);
     }
 if (incoming_bits)
-    *incoming_bits = lp->modembits;
+    *incoming_bits = (lp->modembits & TMXR_MDM_INCOMING);
 if (lp->mp && lp->modem_control) {                  /* This API ONLY works on modem_control enabled multiplexer lines */
-    if (bits_to_set | bits_to_clear) {              /* Anything to do? */
+    if ((bits_to_set | bits_to_clear) || incoming_bits) {/* Anything to do? */
         if (lp->loopback) {
             if ((lp->modembits ^ before_modem_bits) & TMXR_MDM_DTR) { /* DTR changed? */
                 lp->ser_connect_pending = (lp->modembits & TMXR_MDM_DTR);
@@ -1627,8 +1630,12 @@ if (lp->mp && lp->modem_control) {                  /* This API ONLY works on mo
                 }
             return SCPE_OK;
             }
-        if (lp->serport)
-            return sim_control_serial (lp->serport, bits_to_set, bits_to_clear, incoming_bits);
+        if (lp->serport) {
+            t_stat r = sim_control_serial (lp->serport, bits_to_set, bits_to_clear, incoming_bits);
+            if (incoming_bits && (r == SCPE_OK))
+                lp->modembits = (lp->modembits & ~TMXR_MDM_INCOMING) | *incoming_bits;
+            return r;
+            }
         if ((lp->sock) || (lp->connecting)) {
             if ((before_modem_bits & bits_to_clear & TMXR_MDM_DTR) != 0) { /* drop DTR? */
                 if (lp->sock)
@@ -1644,7 +1651,8 @@ if (lp->mp && lp->modem_control) {                  /* This API ONLY works on mo
 
                 sprintf (msg, "tmxr_set_get_modem_bits() - establishing outgoing connection to: %s", lp->destination);
                 tmxr_debug_connect_line (lp, msg);
-                lp->connecting = sim_connect_sock_ex (lp->datagram ? lp->port : NULL, lp->destination, "localhost", NULL, (lp->datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | (lp->packet ? SIM_SOCK_OPT_NODELAY : 0));
+                lp->connecting = sim_connect_sock_ex (lp->datagram ? lp->port : NULL, lp->destination, "localhost", NULL, (lp->datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | 
+                                                                                                                          (lp->packet ? SIM_SOCK_OPT_NODELAY : 0));
                 }
             }
         }
@@ -2201,11 +2209,12 @@ if ((lp->txbfd && !lp->notelnet) || (TXBUF_AVAIL(lp) > 1)) {/* room for char (+ 
         sim_oline = save_oline;                         /* resture output socket */
         }
     sim_exp_check (&lp->expect, chr);                   /* process expect rules as needed */
-    if (!sim_is_running) {                              /* attach message or other non simulation time message? */
+    if (!sim_is_running &&                              /* attach message or other non simulation time message? */
+        !sim_is_remote_console_master_line (lp)) {                              
         tmxr_send_buffered_data (lp);                   /* put data on wire */
         sim_os_ms_sleep(((lp->txbps) && (lp->txdeltausecs > 1000)) ? /* rate limiting output slower than 1000 cps */
                         (lp->txdeltausecs - 1000) / 1000 : 
-                        10);                           /* wait an approximate character delay */
+                        1);                             /* wait an approximate character delay */
         }
     return SCPE_OK;                                     /* char sent */
     }
@@ -2799,7 +2808,8 @@ while (*tptr) {
                     else
                         return sim_messagef (SCPE_ARG, "Unexpected specifier: %s\n", eptr);
                 }
-            sock = sim_connect_sock_ex (NULL, hostport, "localhost", NULL, (datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | (packet ? SIM_SOCK_OPT_NODELAY : 0));
+            sock = sim_connect_sock_ex (NULL, hostport, "localhost", NULL, (datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | 
+                                                                           (packet ? SIM_SOCK_OPT_NODELAY : 0));
             if (sock != INVALID_SOCKET)
                 sim_close_sock (sock);
             else
@@ -2951,7 +2961,8 @@ while (*tptr) {
                         return sim_messagef (SCPE_ARG, "Missing listen port for Datagram socket\n");
                     }
                 lp->packet = packet;
-                sock = sim_connect_sock_ex (datagram ? listen : NULL, hostport, "localhost", NULL, (datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | (packet ? SIM_SOCK_OPT_NODELAY : 0));
+                sock = sim_connect_sock_ex (datagram ? listen : NULL, hostport, "localhost", NULL, (datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | 
+                                                                                                   (packet ? SIM_SOCK_OPT_NODELAY : 0));
                 if (sock != INVALID_SOCKET) {
                     _mux_detach_line (lp, FALSE, TRUE);
                     lp->destination = (char *)malloc(1+strlen(hostport));
@@ -3066,7 +3077,8 @@ while (*tptr) {
                     else
                         return sim_messagef (SCPE_ARG, "Missing listen port for Datagram socket\n");
                     }
-                sock = sim_connect_sock_ex (datagram ? listen : NULL, hostport, "localhost", NULL, (datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | (packet ? SIM_SOCK_OPT_NODELAY : 0));
+                sock = sim_connect_sock_ex (datagram ? listen : NULL, hostport, "localhost", NULL, (datagram ? SIM_SOCK_OPT_DATAGRAM : 0) | 
+                                                                                                   (packet ? SIM_SOCK_OPT_NODELAY : 0));
                 if (sock != INVALID_SOCKET) {
                     _mux_detach_line (lp, FALSE, TRUE);
                     lp->destination = (char *)malloc(1+strlen(hostport));
@@ -5434,4 +5446,59 @@ if ((dptr) && (dbits & dptr->dctrl)) {
         sim_debug (dbits, dptr, "\n");
         }
     }
+}
+
+/* Testing of sim_sock and tmxr */
+
+#include <setjmp.h>
+
+t_stat tmxr_sock_test (DEVICE *dptr)
+{
+char cmd[CBUFSIZE], host[CBUFSIZE], port[CBUFSIZE];
+int line;
+TMXR *tmxr;
+TMLN *ln;
+int32 tmp1, tmp2;
+t_stat stat = SCPE_OK;
+SOCKET sock_mux = INVALID_SOCKET;
+SOCKET sock_line = INVALID_SOCKET;
+SIM_TEST_INIT;
+
+sim_printf ("Testing %s:\n", dptr->name);
+SIM_TEST(sim_parse_addr ("", NULL, 0, "localhost", NULL, 0, "1234", NULL) != -1);
+SIM_TEST(sim_parse_addr ("", host, 0, "localhost", NULL, 0, "1234", NULL) != -1);
+SIM_TEST(sim_parse_addr ("", host, sizeof(host), "localhost", port, 0, "1234", NULL) != -1);
+SIM_TEST((sim_parse_addr ("", host, sizeof(host), "localhost", port, sizeof(port), "1234", NULL) == -1) || (strcmp(host, "localhost")) || (strcmp(port,"1234")));
+SIM_TEST((sim_parse_addr ("localhost:6666", host, sizeof(host), "localhost", port, sizeof(port), "1234", NULL) == -1) || (strcmp(host, "localhost")) || (strcmp(port,"6666")));
+SIM_TEST(sim_parse_addr ("localhost:66666", host, sizeof(host), "localhost", port, sizeof(port), "1234", NULL) != -1);
+SIM_TEST((sim_parse_addr ("localhost:telnet", host, sizeof(host), "localhost", port, sizeof(port), "1234", NULL) == -1) || (strcmp(host, "localhost")) || (strcmp(port,"telnet")));
+SIM_TEST((sim_parse_addr ("telnet", host, sizeof(host), "localhost", port, sizeof(port), "1234", NULL) == -1) || (strcmp(host, "localhost")) || (strcmp(port,"telnet")));
+dptr->dctrl = 0xFFFFFFFF;
+dptr->dctrl &= ~TMXR_DBG_TRC;
+sprintf (cmd, "%s -u localhost:65500;notelnet", dptr->name);
+SIM_TEST(attach_cmd (0, cmd));
+tmxr = (TMXR *)dptr->units->tmxr;
+ln = &tmxr->ldsc[tmxr->lines - 1];
+SIM_TEST(detach_cmd (0, dptr->name));
+if (tmxr->lines > 1) {
+    tmxr->modem_control = FALSE;
+    for (line=0; line < tmxr->lines; line++)
+        tmxr->ldsc[line].modem_control = FALSE;
+    snprintf (cmd + strlen (cmd), sizeof (cmd) - strlen (cmd), ",Line=%d,localhost:65501", tmxr->lines - 1);
+    snprintf (cmd + strlen (cmd), sizeof (cmd) - strlen (cmd), ",Line=0,connect=localhost:65500");
+    SIM_TEST(attach_cmd (0, cmd));
+    sock_line = sim_connect_sock_ex (NULL, "localhost:65501", NULL, NULL, 0);
+    sim_os_ms_sleep (100);
+    SIM_TEST((((tmp1 = tmxr_poll_conn (tmxr)) == tmxr->lines - 1) || (tmp1 == 1)) ? SCPE_OK : SCPE_IERR);
+    sock_mux = sim_connect_sock ("", "localhost", "65500");
+    sim_os_ms_sleep (100);
+    SIM_TEST(((tmp2 = tmxr_poll_conn (tmxr)) == 0) || (tmp2 == 2) ? SCPE_OK : SCPE_IERR);
+    show_cmd (0, "MUX");
+    sim_close_sock (sock_mux);
+    sock_mux = INVALID_SOCKET;
+    sim_close_sock (sock_line);
+    sock_line = INVALID_SOCKET;
+    SIM_TEST(detach_cmd (0, dptr->name));
+    }
+return stat;
 }

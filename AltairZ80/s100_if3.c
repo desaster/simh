@@ -74,7 +74,7 @@ static IF3_INFO if3_info_data = { { 0x0, 0, 0x10, 8 } };
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 extern uint32 PCX;
 
 extern int32 sio0d(const int32 port, const int32 io, const int32 data);
@@ -105,12 +105,12 @@ static uint8 if3_risr[IF3_MAX_BOARDS] = { 0, 0, 0, 0 };
 static uint8 if3_tisr[IF3_MAX_BOARDS] = { 0, 0, 0, 0 };
 
 static REG if3_reg[] = {
-    { HRDATAD (USER,     if3_user,       3, "IF3 user register"), },
-    { HRDATAD (BOARD,    if3_board,      2, "IF3 board register"), },
-    { BRDATAD (RIMR,     &if3_rimr[0],   16, 8, 4, "IF3 RIMR register array"), },
-    { BRDATAD (RISR,     &if3_risr[0],   16, 8, 4, "IF3 RISR register array"), },
-    { BRDATAD (TIMR,     &if3_timr[0],   16, 8, 4, "IF3 TIMR register array"), },
-    { BRDATAD (TISR,     &if3_tisr[0],   16, 8, 4, "IF3 TISR register array"), },
+    { HRDATAD (USER,    if3_user,   3,                      "IF3 user register"),       },
+    { HRDATAD (BOARD,   if3_board,  2,                      "IF3 board register"),      },
+    { BRDATAD (RIMR,    if3_rimr,  16, 8, IF3_MAX_BOARDS,  "IF3 RIMR register array"), },
+    { BRDATAD (RISR,    if3_risr,  16, 8, IF3_MAX_BOARDS,  "IF3 RISR register array"), },
+    { BRDATAD (TIMR,    if3_timr,  16, 8, IF3_MAX_BOARDS,  "IF3 TIMR register array"), },
+    { BRDATAD (TISR,    if3_tisr,  16, 8, IF3_MAX_BOARDS,  "IF3 TISR register array"), },
     { NULL }
 };
 
@@ -177,10 +177,10 @@ static t_stat if3_reset(DEVICE *dptr)
         for(i=0;i<IF3_MAX_BOARDS;i++)
             sim_cancel(&if3_unit[i]);
 
-        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &if3dev, TRUE);
+        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &if3dev, "if3dev", TRUE);
     } else {
         /* Connect IF3 at base address */
-        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &if3dev, FALSE) != 0) {
+        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &if3dev, "if3dev", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }

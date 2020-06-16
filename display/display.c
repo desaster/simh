@@ -125,7 +125,11 @@ struct color color_p29 = { p29, ELEMENTS(p29), 25000 };
 
 /* green phosphor for Tek 611 */
 static struct phosphor p31[] = {{0.0, 1.0, 0.77, 0.5, .1}};
-struct color color_p31 = { p31, ELEMENTS(p31), 25000 };
+struct color color_p31 = { p31, ELEMENTS(p31), 100000 };
+
+/* green phosphor for III */
+static struct phosphor p39[] = {{0.2, 1.0, 0.0, 0.5, 0.01}};
+struct color color_p39 = { p39, ELEMENTS(p39), 20000 };
 
 static struct phosphor p40[] = {
     /* P40 blue-white spot with yellow-green decay (.045s to 10%?) */
@@ -241,7 +245,21 @@ static struct display displays[] = {
      * 512x512, out of 800x600
      * 0,0 at middle
      */
-    { DIS_NG, "NG Display", &color_p31, NULL, 512, 512 }
+    { DIS_NG, "NG Display", &color_p31, NULL, 512, 512 },
+
+    /*
+     * III display
+     * on PDP-10
+     */
+    { DIS_III, "III Display", &color_p39, NULL, 1024, 1024 },
+
+    /*
+     * Imlac display
+     * 1024x1024 addressable points.
+     * P31 phosphor according to "Heads-Up Display for Flight
+     * Simulator for Advanced Aircraft"
+     */
+    { DIS_IMLAC, "Imlac Display", &color_p31, NULL, 1024, 1024 }
 };
 
 /*
@@ -359,6 +377,7 @@ static long queue_interval;
 #define Y(P) (((P) - points) / xpixels)
 
 static int initialized = 0;
+static void *device = NULL;  /* Current display device. */
 
 /*
  * global set by O/S display level to indicate "light pen tip switch activated"
@@ -969,6 +988,7 @@ display_init(enum display_type type, int sf, void *dptr)
 
     initialized = 1;
     init_failed = 0;            /* hey, we made it! */
+    device = dptr;
     return 1;
 
  failed:
@@ -982,10 +1002,14 @@ display_close(void *dptr)
     if (!initialized)
         return;
 
+    if (device != dptr)
+        return;
+
     free (points);
     ws_shutdown();
 
     initialized = 0;
+    device = NULL;
 }
 
 void

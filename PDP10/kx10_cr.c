@@ -1,6 +1,6 @@
-/* ka10_cr.c: PDP10 Card reader.
+/* kx10_cr.c: PDP10 Card reader.
 
-   Copyright (c) 2016-2017, Richard Cornwell
+   Copyright (c) 2016-2020, Richard Cornwell
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -104,7 +104,7 @@ MTAB                cr_mod[] = {
 };
 
 REG                 cr_reg[] = {
-    {BRDATA(BUFF, cr_buffer, 16, 16, sizeof(cr_buffer)), REG_HRO},
+    {BRDATA(BUFF, cr_buffer, 16, 16, sizeof(cr_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };
 

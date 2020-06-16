@@ -76,7 +76,7 @@ extern t_stat show_membase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 extern uint32 PCX;
 extern int32 find_unit_index (UNIT *uptr);
 
@@ -138,16 +138,16 @@ static t_stat scp300f_reset(DEVICE *dptr)
     sim_debug(VERBOSE_MSG, &scp300f_dev, "SCP300F: Reset.\n");
 
     if(dptr->flags & DEV_DIS) { /* Disconnect I/O Ports */
-        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &scp300fdev, TRUE);
-        sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &scp300f_mem, TRUE);
+        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &scp300fdev, "scp300fdev", TRUE);
+        sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &scp300f_mem, "scp300f_mem", TRUE);
     } else {
         /* Connect SCP300F at base address */
-        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &scp300fdev, FALSE) != 0) {
+        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &scp300fdev, "scp300fdev", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
         /* Connect SCP300F Memory (512K RAM, 1MB FLASH) */
-        if(sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &scp300f_mem, FALSE) != 0) {
+        if(sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &scp300f_mem, "scp300f_mem", FALSE) != 0) {
             sim_printf("%s: error mapping MEM resource at 0x%04x\n", __FUNCTION__, pnp->mem_base);
             return SCPE_ARG;
         }
@@ -301,7 +301,7 @@ static uint8 scp300f_rom[SCP300F_ROM_SIZE] = {
 
  static int32 scp300f_mem(const int32 Addr, const int32 write, const int32 data)
 {
-/*  DBG_PRINT(("SCP300F: ROM %s, Addr %04x" NLP, write ? "WR" : "RD", Addr)); */
+/*  DBG_PRINT(("SCP300F: ROM %s, Addr %04x\n", write ? "WR" : "RD", Addr)); */
     if(write) {
         if(scp300f_info->rom_enabled)
         {

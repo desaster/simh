@@ -156,11 +156,12 @@ extern int32 MMR2;
 #define RQ_M_PFN        0x1FFFFF                        /* map entry PFN */
 
 #define UNIT_V_ONL      (DKUF_V_UF + 0)                 /* online */
-#define UNIT_V_WLK      (DKUF_V_UF + 1)                 /* hwre write lock */
-#define UNIT_V_ATP      (DKUF_V_UF + 2)                 /* attn pending */
-#define UNIT_V_DTYPE    (DKUF_V_UF + 3)                 /* drive type */
-#define UNIT_M_DTYPE    0x1F
-#define UNIT_V_NOAUTO   (DKUF_V_UF + 8)                 /* noautosize */
+#define UNIT_V_WLK      DKUF_V_WLK                      /* hwre write lock */
+#define UNIT_V_ATP      (UNIT_V_ONL + 1)                /* attn pending */
+#define UNIT_V_DTYPE    (UNIT_V_ATP + 1)                /* drive type */
+#define UNIT_W_DTYPE    5                               /* 5b drive type encode */
+#define UNIT_M_DTYPE    ((1u << UNIT_W_DTYPE) - 1)
+#define UNIT_V_NOAUTO   (UNIT_V_DTYPE + UNIT_W_DTYPE)   /* noautosize */
 #define UNIT_ONL        (1 << UNIT_V_ONL)
 #define UNIT_WLK        (1 << UNIT_V_WLK)
 #define UNIT_ATP        (1 << UNIT_V_ATP)
@@ -766,6 +767,35 @@ static struct drvtyp drv_tab[] = {
     { 0 }
     };
 
+#undef RQ_DRV
+#define RQ_DRV(d) #d
+
+static const char *drv_types[] = {
+    RQ_DRV (RX50),
+    RQ_DRV (RX33),
+    RQ_DRV (RD51),
+    RQ_DRV (RD31),
+    RQ_DRV (RD52),
+    RQ_DRV (RD53),
+    RQ_DRV (RD54),
+    RQ_DRV (RA82),
+    RQ_DRV (RRD40),
+    RQ_DRV (RA72),
+    RQ_DRV (RA90),
+    RQ_DRV (RA92),
+    RQ_DRV (RA8U),
+    RQ_DRV (RA60),
+    RQ_DRV (RA81),
+    RQ_DRV (RA71),
+    RQ_DRV (RD32),
+    RQ_DRV (RC25),
+    RQ_DRV (RCF25),
+    RQ_DRV (RA80),
+    RQ_DRV (RA70),
+    RQ_DRV (RA73),
+    NULL
+    };
+
 struct ctlrtyp {
     uint32      uqpm;                                   /* port model */
     uint16      model;                                  /* controller model */
@@ -966,11 +996,11 @@ REG rq_reg[] = {
     { GRDATAD (COMM,    rq_ctx.comm,    DEV_RDX, 22, 0, "comm region") },
     { GRDATAD (CQIOFF,  rq_ctx.cq.ioff, DEV_RDX, 32, 0, "command queue intr offset") },
     { GRDATAD (CQBA,    rq_ctx.cq.ba,   DEV_RDX, 22, 0, "command queue base address") },
-    { GRDATAD (CQLNT,   rq_ctx.cq.lnt,  DEV_RDX, 32, 2, "command queue length"), REG_NZ },
+    { GRDATAD (CQLNT,   rq_ctx.cq.lnt,  DEV_RDX,  8, 2, "command queue length"), REG_NZ },
     { GRDATAD (CQIDX,   rq_ctx.cq.idx,  DEV_RDX,  8, 2, "command queue index") },
     { GRDATAD (RQIOFF,  rq_ctx.rq.ioff, DEV_RDX, 32, 0, "request queue intr offset") },
     { GRDATAD (RQBA,    rq_ctx.rq.ba,   DEV_RDX, 22, 0, "request queue base address") },
-    { GRDATAD (RQLNT,   rq_ctx.rq.lnt,  DEV_RDX, 32, 2, "request queue length"), REG_NZ },
+    { GRDATAD (RQLNT,   rq_ctx.rq.lnt,  DEV_RDX,  8, 2, "request queue length"), REG_NZ },
     { GRDATAD (RQIDX,   rq_ctx.rq.idx,  DEV_RDX,  8, 2, "request queue index") },
     { DRDATAD (FREE,    rq_ctx.freq,                 5, "head of free packet list") },
     { DRDATAD (RESP,    rq_ctx.rspq,                 5, "head of response packet list") },
@@ -983,7 +1013,7 @@ REG rq_reg[] = {
     { DRDATAD (HTMO,    rq_ctx.htmo,                17, "host timeout value") },
     { FLDATA  (PRGI,    rq_ctx.prgi,                 0), REG_HIDDEN },
     { FLDATA  (PIP,     rq_ctx.pip,                  0), REG_HIDDEN },
-    { FLDATA  (CTYPE,   rq_ctx.ctype,               32), REG_HIDDEN  },
+    { BINRDATA(CTYPE,   rq_ctx.ctype,               32), REG_HIDDEN },
     { DRDATAD (ITIME,   rq_itime,                   24, "init time delay, except stage 4"), PV_LEFT + REG_NZ },
     { DRDATAD (I4TIME,  rq_itime4,                  24, "init stage 4 delay"), PV_LEFT + REG_NZ },
     { DRDATAD (QTIME,   rq_qtime,                   24, "response time for 'immediate' packets"), PV_LEFT + REG_NZ },
@@ -994,7 +1024,7 @@ REG rq_reg[] = {
     { URDATAD (PKTQ,    rq_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rq_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rq_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
-    { URDATAD (PLUG,    rq_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
+    { URDATAD (PLUG,    rq_unit[0].unit_plug, 10, 32, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rq_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rq_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { DRDATA  (DEVLBN,  drv_tab[RA8U_DTYPE].lbn, 22), REG_HRO },
@@ -1080,15 +1110,17 @@ MTAB rq_mod[] = {
       &rq_set_type, NULL, NULL, "Set RA80 Disk Type" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, RA8U_DTYPE, NULL, "RAUSER=SizeInMB",
       &rq_set_type, NULL, NULL, "Set RAUSER Disk Type and its size" },
+    { MTAB_XTD|MTAB_VUN, RA8U_DTYPE, NULL, "RA8U",
+      &rq_set_type, NULL, NULL, NULL },
     { MTAB_XTD|MTAB_VUN, 0, "TYPE", NULL,
       NULL, &rq_show_type, NULL, "Display device type" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "UNIT", "UNIT=val (0-65534)",
       &rq_set_plug, &rq_show_plug, NULL, "Set/Display Unit plug value" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, NULL, "DRIVES=val (4-254)",
       &rq_set_drives, NULL, NULL, "Set Number of Drives" },
-    { UNIT_NOAUTO, UNIT_NOAUTO, "noautosize", "NOAUTOSIZE", NULL, NULL, NULL, "Disables disk autosize on attach" },
-    { UNIT_NOAUTO,           0, "autosize",   "AUTOSIZE",   NULL, NULL, NULL, "Enables disk autosize on attach" },
-    { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT={SIMH|VHD|RAW}",
+    { UNIT_NOAUTO, UNIT_NOAUTO, "noautosize", "NOAUTOSIZE", NULL, NULL, NULL, "Disable disk autosize on attach" },
+    { UNIT_NOAUTO,           0, "autosize",   "AUTOSIZE",   NULL, NULL, NULL, "Enable disk autosize on attach" },
+    { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT={AUTO|SIMH|VHD|RAW}",
       &sim_disk_set_fmt, &sim_disk_show_fmt, NULL, "Set/Display disk format" },
 #if defined (VM_PDP11)
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 004, "ADDRESS", "ADDRESS",
@@ -1149,11 +1181,11 @@ REG rqb_reg[] = {
     { GRDATAD (COMM,    rqb_ctx.comm,    DEV_RDX, 22, 0, "comm region") },
     { GRDATAD (CQIOFF,  rqb_ctx.cq.ioff, DEV_RDX, 32, 0, "command queue intr offset") },
     { GRDATAD (CQBA,    rqb_ctx.cq.ba,   DEV_RDX, 22, 0, "command queue base address") },
-    { GRDATAD (CQLNT,   rqb_ctx.cq.lnt,  DEV_RDX, 32, 2, "command queue length"), REG_NZ },
+    { GRDATAD (CQLNT,   rqb_ctx.cq.lnt,  DEV_RDX,  8, 2, "command queue length"), REG_NZ },
     { GRDATAD (CQIDX,   rqb_ctx.cq.idx,  DEV_RDX,  8, 2, "command queue index") },
     { GRDATAD (RQIOFF,  rqb_ctx.rq.ioff, DEV_RDX, 32, 0, "request queue intr offset") },
     { GRDATAD (RQBA,    rqb_ctx.rq.ba,   DEV_RDX, 22, 0, "request queue base address") },
-    { GRDATAD (RQLNT,   rqb_ctx.rq.lnt,  DEV_RDX, 32, 2, "request queue length"), REG_NZ },
+    { GRDATAD (RQLNT,   rqb_ctx.rq.lnt,  DEV_RDX,  8, 2, "request queue length"), REG_NZ },
     { GRDATAD (RQIDX,   rqb_ctx.rq.idx,  DEV_RDX,  8, 2, "request queue index") },
     { DRDATAD (FREE,    rqb_ctx.freq,                 5, "head of free packet list") },
     { DRDATAD (RESP,    rqb_ctx.rspq,                 5, "head of response packet list") },
@@ -1166,14 +1198,14 @@ REG rqb_reg[] = {
     { DRDATAD (HTMO,    rqb_ctx.htmo,                17, "host timeout value") },
     { FLDATA  (PRGI,    rqb_ctx.prgi,                 0), REG_HIDDEN },
     { FLDATA  (PIP,     rqb_ctx.pip,                  0), REG_HIDDEN },
-    { FLDATA  (CTYPE,   rqb_ctx.ctype,               32), REG_HIDDEN  },
+    { BINRDATA(CTYPE,   rqb_ctx.ctype,               32), REG_HIDDEN },
     { BRDATAD (PKTS,    rqb_ctx.pak,     DEV_RDX,    16, sizeof(rq_ctx.pak)/2, "packet buffers, 33W each, 32 entries") },
     { URDATAD (CPKT,    rqb_unit[0].cpkt, 10, 5, 0, RQ_NUMDR, 0, "current packet, units 0 to 3") },
     { URDATAD (UCNUM,   rqb_unit[0].cnum, 10, 5, 0, RQ_NUMDR, 0, "ctrl number, units 0 to 3") },
     { URDATAD (PKTQ,    rqb_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rqb_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rqb_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
-    { URDATAD (PLUG,    rqb_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
+    { URDATAD (PLUG,    rqb_unit[0].unit_plug, 10, 32, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rqb_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rqb_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { NULL }
@@ -1222,11 +1254,11 @@ REG rqc_reg[] = {
     { GRDATAD (COMM,    rqc_ctx.comm,    DEV_RDX, 22, 0, "comm region") },
     { GRDATAD (CQIOFF,  rqc_ctx.cq.ioff, DEV_RDX, 32, 0, "command queue intr offset") },
     { GRDATAD (CQBA,    rqc_ctx.cq.ba,   DEV_RDX, 22, 0, "command queue base address") },
-    { GRDATAD (CQLNT,   rqc_ctx.cq.lnt,  DEV_RDX, 32, 2, "command queue length"), REG_NZ },
+    { GRDATAD (CQLNT,   rqc_ctx.cq.lnt,  DEV_RDX,  8, 2, "command queue length"), REG_NZ },
     { GRDATAD (CQIDX,   rqc_ctx.cq.idx,  DEV_RDX,  8, 2, "command queue index") },
     { GRDATAD (RQIOFF,  rqc_ctx.rq.ioff, DEV_RDX, 32, 0, "request queue intr offset") },
     { GRDATAD (RQBA,    rqc_ctx.rq.ba,   DEV_RDX, 22, 0, "request queue base address") },
-    { GRDATAD (RQLNT,   rqc_ctx.rq.lnt,  DEV_RDX, 32, 2, "request queue length"), REG_NZ },
+    { GRDATAD (RQLNT,   rqc_ctx.rq.lnt,  DEV_RDX,  8, 2, "request queue length"), REG_NZ },
     { GRDATAD (RQIDX,   rqc_ctx.rq.idx,  DEV_RDX,  8, 2, "request queue index") },
     { DRDATAD (FREE,    rqc_ctx.freq,                 5, "head of free packet list") },
     { DRDATAD (RESP,    rqc_ctx.rspq,                 5, "head of response packet list") },
@@ -1239,14 +1271,14 @@ REG rqc_reg[] = {
     { DRDATAD (HTMO,    rqc_ctx.htmo,                17, "host timeout value") },
     { FLDATA  (PRGI,    rqc_ctx.prgi,                 0), REG_HIDDEN },
     { FLDATA  (PIP,     rqc_ctx.pip,                  0), REG_HIDDEN },
-    { FLDATA  (CTYPE,   rqc_ctx.ctype,               32), REG_HIDDEN  },
+    { BINRDATA(CTYPE,   rqc_ctx.ctype,               32), REG_HIDDEN },
     { BRDATAD (PKTS,    rqc_ctx.pak,     DEV_RDX,    16, sizeof(rq_ctx.pak)/2, "packet buffers, 33W each, 32 entries") },
     { URDATAD (CPKT,    rqc_unit[0].cpkt, 10, 5, 0, RQ_NUMDR, 0, "current packet, units 0 to 3") },
     { URDATAD (UCNUM,   rqc_unit[0].cnum, 10, 5, 0, RQ_NUMDR, 0, "ctrl number, units 0 to 3") },
     { URDATAD (PKTQ,    rqc_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rqc_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rqc_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
-    { URDATAD (PLUG,    rqc_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
+    { URDATAD (PLUG,    rqc_unit[0].unit_plug, 10, 32, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rqc_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rqc_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { NULL }
@@ -1295,11 +1327,11 @@ REG rqd_reg[] = {
     { GRDATAD (COMM,    rqd_ctx.comm,    DEV_RDX, 22, 0, "comm region") },
     { GRDATAD (CQIOFF,  rqd_ctx.cq.ioff, DEV_RDX, 32, 0, "command queue intr offset") },
     { GRDATAD (CQBA,    rqd_ctx.cq.ba,   DEV_RDX, 22, 0, "command queue base address") },
-    { GRDATAD (CQLNT,   rqd_ctx.cq.lnt,  DEV_RDX, 32, 2, "command queue length"), REG_NZ },
+    { GRDATAD (CQLNT,   rqd_ctx.cq.lnt,  DEV_RDX,  8, 2, "command queue length"), REG_NZ },
     { GRDATAD (CQIDX,   rqd_ctx.cq.idx,  DEV_RDX,  8, 2, "command queue index") },
     { GRDATAD (RQIOFF,  rqd_ctx.rq.ioff, DEV_RDX, 32, 0, "request queue intr offset") },
     { GRDATAD (RQBA,    rqd_ctx.rq.ba,   DEV_RDX, 22, 0, "request queue base address") },
-    { GRDATAD (RQLNT,   rqd_ctx.rq.lnt,  DEV_RDX, 32, 2, "request queue length"), REG_NZ },
+    { GRDATAD (RQLNT,   rqd_ctx.rq.lnt,  DEV_RDX,  8, 2, "request queue length"), REG_NZ },
     { GRDATAD (RQIDX,   rqd_ctx.rq.idx,  DEV_RDX,  8, 2, "request queue index") },
     { DRDATAD (FREE,    rqd_ctx.freq,                 5, "head of free packet list") },
     { DRDATAD (RESP,    rqd_ctx.rspq,                 5, "head of response packet list") },
@@ -1312,14 +1344,14 @@ REG rqd_reg[] = {
     { DRDATAD (HTMO,    rqd_ctx.htmo,                17, "host timeout value") },
     { FLDATA  (PRGI,    rqd_ctx.prgi,                 0), REG_HIDDEN },
     { FLDATA  (PIP,     rqd_ctx.pip,                  0), REG_HIDDEN },
-    { FLDATA  (CTYPE,   rqd_ctx.ctype,               32), REG_HIDDEN  },
+    { BINRDATA(CTYPE,   rqd_ctx.ctype,               32), REG_HIDDEN },
     { BRDATAD (PKTS,    rqd_ctx.pak,     DEV_RDX,    16, sizeof(rq_ctx.pak)/2, "packet buffers, 33W each, 32 entries") },
     { URDATAD (CPKT,    rqd_unit[0].cpkt, 10, 5, 0, RQ_NUMDR, 0, "current packet, units 0 to 3") },
     { URDATAD (UCNUM,   rqd_unit[0].cnum, 10, 5, 0, RQ_NUMDR, 0, "ctrl number, units 0 to 3") },
     { URDATAD (PKTQ,    rqd_unit[0].pktq, 10, 5, 0, RQ_NUMDR, 0, "packet queue, units 0 to 3") },
     { URDATAD (UFLG,    rqd_unit[0].uf,  DEV_RDX, 16, 0, RQ_NUMDR, 0, "unit flags, units 0 to 3") },
     { URDATA  (CAPAC,   rqd_unit[0].capac, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_HRO) },
-    { URDATAD (PLUG,    rqd_unit[0].unit_plug, 10, T_ADDR_W, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
+    { URDATAD (PLUG,    rqd_unit[0].unit_plug, 10, 32, 0, RQ_NUMDR, PV_LEFT | REG_RO, "unit plug value, units 0 to 3") },
     { GRDATA  (DEVADDR, rqd_dib.ba,      DEV_RDX, 32, 0), REG_HRO },
     { GRDATA  (DEVVEC,  rqd_dib.vec,     DEV_RDX, 16, 0), REG_HRO },
     { NULL }
@@ -2935,7 +2967,8 @@ t_stat rq_attach (UNIT *uptr, CONST char *cptr)
 MSC *cp = rq_ctxmap[uptr->cnum];
 t_stat r;
 
-r = sim_disk_attach (uptr, cptr, RQ_NUMBY, sizeof (uint16), (uptr->flags & UNIT_NOAUTO), DBG_DSK, drv_tab[GET_DTYPE (uptr->flags)].name, 0, 0);
+r = sim_disk_attach_ex (uptr, cptr, RQ_NUMBY, sizeof (uint16), (uptr->flags & UNIT_NOAUTO), DBG_DSK, 
+                        drv_tab[GET_DTYPE (uptr->flags)].name, 0, 0, (uptr->flags & UNIT_NOAUTO) ? NULL : drv_types);
 if (r != SCPE_OK)
     return r;
 

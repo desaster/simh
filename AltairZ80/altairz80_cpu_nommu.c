@@ -84,8 +84,7 @@
 #define JPC(cond) {                             \
     if (cond) {                                 \
         PC = GET_WORD(PC);                      \
-    }                                           \
-    else {                                      \
+    } else {                                    \
         PC += 2;                                \
     }                                           \
 }
@@ -95,8 +94,7 @@
         register uint32 adrr = GET_WORD(PC);    \
         PUSH(PC + 2);                           \
         PC = adrr;                              \
-    }                                           \
-    else {                                      \
+    } else {                                    \
         PC += 2;                                \
     }                                           \
 }
@@ -125,10 +123,6 @@ extern int32 DE1_S; /* alternate DE register                        */
 extern int32 HL1_S; /* alternate HL register                        */
 extern int32 IFF_S; /* Interrupt Flip Flop                          */
 extern int32 IR_S;  /* Interrupt (upper) / Refresh (lower) register */
-
-#if !UNIX_PLATFORM
-extern void pollForCPUStop(void);
-#endif
 
 /* the following tables precompute some common subexpressions
     parityTable[i]          0..255  (number of 1's in i is odd) ? 0 : 4
@@ -1021,10 +1015,6 @@ t_stat sim_instr_nommu(void) {
     /* main instruction fetch/decode loop */
     while (TRUE) {                                  /* loop until halted    */
         if (sim_interval <= 0) {                    /* check clock queue    */
-#if !UNIX_PLATFORM
-            /* poll on platforms without reliable signalling but not too often */
-            pollForCPUStop(); /* following sim_process_event will check for stop */
-#endif
             if ((reason = sim_process_event()))
                 break;
         }
@@ -1256,8 +1246,7 @@ t_stat sim_instr_nommu(void) {
                     }
                     if (hd)
                         acu -= 0x160;   /* adjust high digit */
-                }
-                else {          /* last operation was an add */
+                } else {          /* last operation was an add */
                     if (TSTFLAG(H) || (temp > 9)) { /* adjust low digit */
                         SETFLAG(H, (temp > 9));
                         acu += 6;

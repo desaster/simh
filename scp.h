@@ -117,6 +117,7 @@ t_stat echo_cmd (int32 flag, CONST char *ptr);
 t_stat echof_cmd (int32 flag, CONST char *ptr);
 t_stat debug_cmd (int32 flag, CONST char *ptr);
 t_stat runlimit_cmd (int32 flag, CONST char *ptr);
+t_stat test_lib_cmd (int32 flag, CONST char *ptr);
 
 /* Allow compiler to help validate printf style format arguments */
 #if !defined __GNUC__
@@ -317,6 +318,7 @@ t_stat show_dev_debug (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, CONST cha
 t_stat sim_add_debug_flags (DEVICE *dptr, DEBTAB *debflags);
 const char *sim_error_text (t_stat stat);
 t_stat sim_string_to_stat (const char *cptr, t_stat *cond);
+t_stat sim_sched_step (void);
 t_stat sim_cancel_step (void);
 void sim_printf (const char *fmt, ...) GCC_FMT_ATTR(1, 2);
 void sim_perror (const char *msg);
@@ -333,7 +335,7 @@ void sim_debug_bits (uint32 dbits, DEVICE* dptr, BITFIELD* bitdefs,
 #define _sim_debug_device sim_debug
 void sim_debug (uint32 dbits, DEVICE* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
 #define _sim_debug_unit sim_debug_unit
-void sim_debug_unit (uint32 dbits, DEVICE* dptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
+void sim_debug_unit (uint32 dbits, UNIT* uptr, const char *fmt, ...) GCC_FMT_ATTR(3, 4);
 #else
 void _sim_debug_unit (uint32 dbits, UNIT *uptr, const char* fmt, ...) GCC_FMT_ATTR(3, 4);
 void _sim_debug_device (uint32 dbits, DEVICE* dptr, const char* fmt, ...) GCC_FMT_ATTR(3, 4);
@@ -363,6 +365,7 @@ extern UNIT *sim_dfunit;
 extern int32 sim_interval;
 extern int32 sim_switches;
 extern int32 sim_switch_number;
+extern int32 sim_show_message;
 extern int32 sim_quiet;
 extern int32 sim_step;
 extern t_stat sim_last_cmd_stat;                        /* Command Status */
@@ -416,9 +419,16 @@ extern t_stat parse_sym (CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val
     int32 sw);
 
 /* The per-simulator init routine is a weak global that defaults to NULL
-   The other per-simulator pointers can be overrriden by the init routine */
+   The other per-simulator pointers can be overrriden by the init routine
 
 extern void (*sim_vm_init) (void);
+
+   This routine is no longer invoked this way since it doesn't work reliably
+   on all simh supported compile environments.  A simulator that needs these 
+   initializations can perform them in the CPU device reset routine which will 
+   always be called before anything else can be processed.
+
+ */
 extern char *(*sim_vm_read) (char *ptr, int32 size, FILE *stream);
 extern void (*sim_vm_post) (t_bool from_scp);
 extern CTAB *sim_vm_cmd;
@@ -429,6 +439,9 @@ extern t_bool (*sim_vm_fprint_stopped) (FILE *st, t_stat reason);
 extern t_value (*sim_vm_pc_value) (void);
 extern t_bool (*sim_vm_is_subroutine_call) (t_addr **ret_addrs);
 extern const char **sim_clock_precalibrate_commands;
+extern int32 sim_vm_initial_ips;                        /* base estimate of simulated instructions per second */
+extern const char *sim_vm_interval_units;               /* Simulator can change this - default "instructions" */
+extern const char *sim_vm_step_unit;                    /* Simulator can change this - default "instruction" */
 
 
 /* Core SCP libraries can potentially have unit test routines.

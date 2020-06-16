@@ -1,6 +1,6 @@
-/* ka10_imp.c: IMP, interface message processor.
+/* kx10_imp.c: IMP, interface message processor.
 
-   Copyright (c) 2018, Richard Cornwell based on code provided by
+   Copyright (c) 2018-2020, Richard Cornwell based on code provided by
          Lars Brinkhoff and Danny Gasparovski.
 
    Permission is hereby granted, free of charge, to any person obtaining a
@@ -129,21 +129,6 @@
 #define IPOS       u5    /* Input bit position */
 #define ILEN       u6    /* Size of input buffer in bits */
 
-
-#ifdef _MSC_VER
-# define PACKED_BEGIN __pragma( pack(push, 1) )
-# define PACKED_END __pragma( pack(pop) )
-# define QEMU_PACKED
-#else
-# define PACKED_BEGIN
-#if defined(_WIN32)
-# define PACKED_END __attribute__((gcc_struct, packed))
-# define QEMU_PACKED __attribute__((gcc_struct, packed))
-#else
-# define PACKED_END __attribute__((packed))
-# define QEMU_PACKED __attribute__((packed))
-#endif
-#endif
 
 #define IMP_ARPTAB_SIZE        64
 #define IMP_ARP_MAX_AGE        100
@@ -451,6 +436,7 @@ static CONST ETH_MAC broadcast_ethaddr = {0xff,0xff,0xff,0xff,0xff,0xff};
 static CONST in_addr_T broadcast_ipaddr = {0xffffffff};
 
 t_stat         imp_devio(uint32 dev, uint64 *data);
+t_addr         imp_devirq(uint32 dev, t_addr addr);
 t_stat         imp_srv(UNIT *);
 t_stat         imp_eth_srv(UNIT *);
 t_stat         imp_tim_srv(UNIT *);
@@ -503,7 +489,13 @@ UNIT imp_unit[] = {
     {UDATA(imp_eth_srv, UNIT_IDLE+UNIT_DIS,     0)},  /* 0 */
     {UDATA(imp_tim_srv, UNIT_IDLE+UNIT_DIS,     0)},  /* 0 */
 };
-DIB imp_dib = {IMP_DEVNUM, 1, &imp_devio, NULL};
+DIB imp_dib = {IMP_DEVNUM, 1, &imp_devio, 
+#if KL
+        &imp_devirq,
+#else
+        NULL
+#endif
+};
 
 MTAB imp_mod[] = {
     { MTAB_XTD|MTAB_VDV|MTAB_VALR|MTAB_NC, 0, "MAC", "MAC=xx:xx:xx:xx:xx:xx",
@@ -562,13 +554,16 @@ DEBTAB              imp_debug[] = {
     {0, 0}
 };
 
-
+REG                 imp_reg[] = {
+    {SAVEDATA(DATA, imp_data) },
+    {0}
+};
 
 DEVICE imp_dev = {
-    "IMP", imp_unit, NULL, imp_mod,
+    "IMP", imp_unit, imp_reg, imp_mod,
     3, 8, 0, 1, 8, 36,
     NULL, NULL, &imp_reset, NULL, &imp_attach, &imp_detach,
-    &imp_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG, 0, imp_debug,
+    &imp_dib, DEV_DISABLE | DEV_DIS | DEV_DEBUG | DEV_ETHER, 0, imp_debug,
     NULL, NULL, &imp_help, NULL, NULL, &imp_description
 };
 #define IMP_OCHN     0000007
@@ -635,6 +630,7 @@ t_stat imp_devio(uint32 dev, uint64 *data)
                  uptr->STATUS |= IMPIHE;
              if (*data & IMPLHW) /* Last host word. */
                  uptr->STATUS |= IMPLHW;
+             check_interrupts(uptr);
              break;
         case TYPE_BBN:
              break;
@@ -730,6 +726,20 @@ t_stat imp_devio(uint32 dev, uint64 *data)
     check_interrupts (uptr);
     return SCPE_OK;
 }
+
+#if KL
+/* Handle KL style interrupt vectors for ITS */
+t_addr
+imp_devirq(uint32 dev, t_addr addr) {
+    if ((cpu_unit[0].flags & UNIT_ITSPAGE) != 0 && (imp_data.pia & 7) == 1) {
+        if (imp_unit[0].STATUS & IMPID && (imp_unit[0].STATUS & IMPLW) == 0)
+            return 070|RSIGN;
+        if (imp_unit[0].STATUS & IMPOD)
+            return 072|RSIGN;
+    }
+    return  addr;
+}
+#endif
 
 t_stat imp_srv(UNIT * uptr)
 {
@@ -2669,6 +2679,7 @@ t_stat imp_attach(UNIT* uptr, CONST char* cptr)
     if (tptr == NULL) return SCPE_MEM;
     strcpy(tptr, cptr);
 
+    memset(&imp_data.ReadQ, 0, sizeof(ETH_QUE));
     status = eth_open(&imp_data.etherface, cptr, &imp_dev, DEBUG_ETHER);
     if (status != SCPE_OK) {
       free(tptr);
@@ -2747,12 +2758,12 @@ t_stat imp_detach(UNIT* uptr)
         if (uptr->flags & UNIT_DHCP) {
           imp_dhcp_release(&imp_data);
         }
+        sim_cancel (uptr+1);                /* stop the packet timing services */
+        sim_cancel (uptr+2);                /* stop the clock timer services */
         eth_close (&imp_data.etherface);
         free(uptr->filename);
         uptr->filename = NULL;
         uptr->flags &= ~UNIT_ATT;
-        sim_cancel (uptr+1);                /* stop the packet timing services */
-        sim_cancel (uptr+2);                /* stop the clock timer services */
     }
     return SCPE_OK;
 }

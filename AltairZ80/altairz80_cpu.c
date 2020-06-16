@@ -41,6 +41,8 @@
 #define PCQ_MASK        (PCQ_SIZE - 1)
 #define PCQ_ENTRY(PC)   if (pcq[pcq_p] != (PC)) { pcq[pcq_p = (pcq_p - 1) & PCQ_MASK] = (PC); }
 
+#define INST_MAX_BYTES  4                       /* instruction max bytes */
+
 #define FLAG_C  1
 #define FLAG_N  2
 #define FLAG_P  4
@@ -50,6 +52,7 @@
 
 #define SETFLAG(f,c)    AF = (c) ? AF | FLAG_ ## f : AF & ~FLAG_ ## f
 #define TSTFLAG(f)      ((AF & FLAG_ ## f) != 0)
+#define TSTFLAG2(a, f)  ((a & FLAG_ ## f) != 0)
 
 #define LOW_DIGIT(x)     ((x) & 0xf)
 #define HIGH_DIGIT(x)    (((x) >> 4) & 0xf)
@@ -96,8 +99,7 @@
     if (cond) {                                             \
         PCQ_ENTRY(PCX);                                     \
         PC = GET_WORD(PC);                                  \
-    }                                                       \
-    else {                                                  \
+    } else {                                                \
         PC += 2;                                            \
     }                                                       \
 }
@@ -110,8 +112,7 @@
         PCQ_ENTRY(PCX);                                     \
         PC = adrr;                                          \
         tStates += 17;                                      \
-    }                                                       \
-    else {                                                  \
+    } else {                                                \
         PC += 2;                                            \
         tStates += (chiptype == CHIP_TYPE_8080 ? 11 : 10);  \
     }                                                       \
@@ -158,6 +159,8 @@ static t_stat cpu_set_ramtype       (UNIT *uptr, int32 value, CONST char *cptr, 
 static t_stat cpu_set_chiptype      (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
 static t_stat cpu_set_size          (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
 static t_stat cpu_set_memory        (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
+static t_stat cpu_set_hist          (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+static t_stat cpu_show_hist         (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 static t_stat cpu_clear_command     (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
 static void cpu_clear(void);
 static t_stat cpu_show              (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
@@ -186,11 +189,13 @@ uint32 getClockFrequency(void);
 void setClockFrequency(const uint32 Value);
 uint32 getCommon(void);
 uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                        int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 
 void PutBYTEExtended(register uint32 Addr, const register uint32 Value);
 uint32 GetBYTEExtended(register uint32 Addr);
 void cpu_raise_interrupt(uint32 irq);
+
+const char* handlerNameForPort(const int32 port);
 
 /*  CPU data structures
     cpu_dev CPU device descriptor
@@ -246,16 +251,41 @@ static  uint16 pcq[PCQ_SIZE]    = { 0 };            /* PC queue                 
 static  int32 pcq_p             = 0;                /* PC queue ptr                                 */
 static  REG *pcq_r              = NULL;             /* PC queue reg ptr                             */
 
-uint32 m68k_registers[M68K_REG_CPU_TYPE + 1];       /* M68K CPU registers                           */
+#define HIST_MIN        16
+#define HIST_MAX        8192
+
+typedef struct {
+    uint8 valid;
+    uint16 af;
+    uint16 bc;
+    uint16 de;
+    uint16 hl;
+    t_addr pc;
+    t_addr sp;
+    uint16 af1;
+    uint16 bc1;
+    uint16 de1;
+    uint16 hl1;
+    uint16 ix;
+    uint16 iy;
+    t_value op[INST_MAX_BYTES];
+} insthist_t;
+
+static  uint32 hst_p = 0;                           /* history pointer      */
+static  uint32 hst_lnt = 0;                         /* history length       */
+static  insthist_t *hst = NULL;                     /* instruction history  */
+
+uint32 m68k_registers[M68K_REG_CPU_TYPE + 1];       /* M68K CPU registers   */
 
 
 /* data structure for IN/OUT instructions */
 struct idev {
     int32 (*routine)(const int32, const int32, const int32);
+    const char* name;
 };
 
-static  int32 switcherPort      = SWITCHCPU_DEFAULT;
-static struct idev oldSwitcherDevice = { NULL };
+static  int32 switcherPort            = SWITCHCPU_DEFAULT;
+static  struct idev oldSwitcherDevice = { NULL, NULL };
 
 // CPU_INDEX_8080 is defined in altairz80_defs.h
 #define CPU_INDEX_8086  26
@@ -291,7 +321,7 @@ REG cpu_reg[] = {
     }, /* 13 */
     { GRDATAD (IFF,     IFF_S, 2, 2, 0,         "Z80 Interrupt Flip Flop register")
     }, /*  6 */
-    { HRDATAD (IR,      IR_S,               16,  "Z80 Interrupt (upper) / Refresh (lower) register")
+    { HRDATAD (IR,      IR_S,               16, "Z80 Interrupt (upper) / Refresh (lower) register")
     }, /*  7 */
 
     // 8086 registers
@@ -401,39 +431,39 @@ REG cpu_reg[] = {
     }, /* 64 M68K, PREF_ADDR            */
     { HRDATAD (M68K_PREF_DATA,  m68k_registers[M68K_REG_PREF_DATA], 32, "M68K Last Prefetch Data register"),
     }, /* 65 M68K, PREF_DATA            */
-    { HRDATAD (M68K_PPC,         m68k_registers[M68K_REG_PPC],       32, "M68K Previous Proram Counter register"),
+    { HRDATAD (M68K_PPC,         m68k_registers[M68K_REG_PPC],      32, "M68K Previous Proram Counter register"),
     }, /* 66 M68K, PPC                  */
-    { HRDATAD (M68K_IR,          m68k_registers[M68K_REG_IR],        32, "M68K Instruction Register"),
+    { HRDATAD (M68K_IR,          m68k_registers[M68K_REG_IR],       32, "M68K Instruction Register"),
     }, /* 67 M68K, IR                   */
-    { HRDATAD (M68K_CPU_TYPE,    m68k_registers[M68K_REG_CPU_TYPE],  32, "M68K CPU Type register"),
+    { HRDATAD (M68K_CPU_TYPE,    m68k_registers[M68K_REG_CPU_TYPE], 32, "M68K CPU Type register"),
         REG_RO }, /* 68 M68K, CPU_TYPE             */
 
     // Pseudo registers
-    { FLDATAD (OPSTOP,   cpu_unit.flags,     UNIT_CPU_V_OPSTOP, "Stop on invalid operation pseudo register"),
+    { FLDATAD (OPSTOP,  cpu_unit.flags,     UNIT_CPU_V_OPSTOP, "Stop on invalid operation pseudo register"),
         REG_HRO         }, /* 69 */
-    { HRDATAD (SR,       SR,                 8, "Front panel switches pseudo register"),
+    { HRDATAD (SR,      SR,                 8, "Front panel switches pseudo register"),
     }, /* 70 */
-    { HRDATAD (BANK,     bankSelect,         MAXBANKSLOG2, "Active bank pseudo register"),
+    { HRDATAD (BANK,    bankSelect,         MAXBANKSLOG2, "Active bank pseudo register"),
     }, /* 71 */
-    { HRDATAD (COMMON,   common,             32, "Starting address of common memory pseudo register"),
+    { HRDATAD (COMMON,  common,             32, "Starting address of common memory pseudo register"),
     }, /* 72 */
-    { HRDATAD (SWITCHERPORT, switcherPort,   8, "I/O port for CPU switcher pseudo register"),
+    { HRDATAD (SWITCHERPORT, switcherPort,  8, "I/O port for CPU switcher pseudo register"),
     }, /* 73 */
-    { DRDATAD (CLOCK,    clockFrequency,     32, "Clock frequency in kHz for 8080 / Z80 pseudo register"),
+    { DRDATAD (CLOCK,   clockFrequency,     32, "Clock frequency in kHz for 8080 / Z80 pseudo register"),
     }, /* 74 */
-    { DRDATAD (SLICE,    sliceLength,        16, "Length of time slice for 8080 / Z80 pseudo register"),
+    { DRDATAD (SLICE,   sliceLength,        16, "Length of time slice for 8080 / Z80 pseudo register"),
     }, /* 75 */
-    { DRDATAD (TSTATES,  executedTStates,    32, "Executed t-states for 8080 / Z80 pseudo register"),
+    { DRDATAD (TSTATES, executedTStates,    32, "Executed t-states for 8080 / Z80 pseudo register"),
         REG_RO              }, /* 76 */
-    { HRDATAD (CAPACITY, cpu_unit.capac,     32, "Size of RAM pseudo register"),
+    { HRDATAD (CAPACITY,cpu_unit.capac,     32, "Size of RAM pseudo register"),
         REG_RO              }, /* 77 */
-    { HRDATAD (PREVCAP,  previousCapacity,   32, "Previous size of RAM pseudo register"),
+    { HRDATAD (PREVCAP, previousCapacity,   32, "Previous size of RAM pseudo register"),
         REG_RO              }, /* 78 */
-    { BRDATAD (PCQ,      pcq, 16, 16, PCQ_SIZE, "Program counter circular buffer for 8080 /Z80 pseudo register"),
+    { BRDATAD (PCQ,     pcq, 16, 16,        PCQ_SIZE, "Program counter circular buffer for 8080 /Z80 pseudo register"),
         REG_RO + REG_CIRC   }, /* 79 */
-    { DRDATAD (PCQP,     pcq_p,          PCQ_SIZE_LOG2, "Circular buffer head for 8080 / Z80 pseudo register"),
+    { DRDATAD (PCQP,    pcq_p, PCQ_SIZE_LOG2, "Circular buffer head for 8080 / Z80 pseudo register"),
         REG_HRO             }, /* 80 */
-    { HRDATAD (WRU,      sim_int_char,        8, "Interrupt character pseudo register"),
+    { HRDATAD (WRU,     sim_int_char,       8, "Interrupt character pseudo register"),
     }, /* 81 */
     { NULL }
 };
@@ -523,6 +553,8 @@ static MTAB cpu_mod[] = {
         NULL, NULL, "Sets the RAM size to 60KB for 8080 / Z80 / 8086"       },
     { MTAB_VDV,             64,                 NULL,           "64KB",         &cpu_set_size,
         NULL, NULL, "Sets the RAM size to 64KB for 8080 / Z80 / 8086"       },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_VALO|MTAB_SHP, 0, "HISTORY", "HISTORY",   &cpu_set_hist, &cpu_show_hist,
+      NULL, "CPU instruction history buffer"},
     { 0 }
 };
 
@@ -547,73 +579,77 @@ DEVICE cpu_dev = {
     address is here, 'nulldev' means no device is available
 */
 static struct idev dev_table[256] = {
-    {&nulldev}, {&nulldev}, {&sio0d},   {&sio0s},           /* 00 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 04 */
-    {&dsk10},   {&dsk11},   {&dsk12},   {&nulldev},         /* 08 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 0C */
-    {&sio0s},   {&sio0d},   {&sio1s},   {&sio1d},           /* 10 */
-    {&sio0s},   {&sio0d},   {&sio0s},   {&sio0d},           /* 14 */
-    {&sio0s},   {&sio0d},   {&nulldev}, {&nulldev},         /* 18 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 1C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 20 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 24 */
-    {&netStatus},{&netData},{&netStatus},{&netData},        /* 28 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 2C */
-    {&nulldev}, {&nulldev}, {&netStatus},{&netData},        /* 30 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 34 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 38 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 3C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 40 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 44 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 48 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 4C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 50 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 54 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 58 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 5C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 60 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 64 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 68 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 6C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 70 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 74 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 78 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 7C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 80 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 84 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 88 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 8C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 90 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 94 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 98 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 9C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* A0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* A4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* A8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* AC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* B0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* B4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* B8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* BC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* C0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* C4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* C8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* CC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* D0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* D4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* D8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* DC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* E0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* E4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* E8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* EC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* F0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* F4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* F8 */
-    {&nulldev}, {&hdsk_io}, {&simh_dev}, {&sr_dev}          /* FC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&sio0d, "sio0d"},     {&sio0s, "sio0s"},             /* 00 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 04 */
+    {&dsk10, "dsk10"},     {&dsk11, "dsk11"},     {&dsk12, "dsk12"},     {&nulldev, "nulldev"},         /* 08 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 0C */
+    {&sio0s, "sio0s"},     {&sio0d, "sio0d"},     {&sio1s, "sio1s"},     {&sio1d, "sio1d"},             /* 10 */
+    {&sio0s, "sio0s"},     {&sio0d, "sio0d"},     {&sio0s, "sio0s"},     {&sio0d, "sio0d"},             /* 14 */
+    {&sio0s, "sio0s"},     {&sio0d, "sio0d"},     {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 18 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 1C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 20 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 24 */
+    {&netStatus, "netStatus"}, {&netData, "netData"}, {&netStatus, "netStatus"}, {&netData, "netData"}, /* 28 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 2C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&netStatus, "netStatus"},{&netData, "netData"},      /* 30 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 34 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 38 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 3C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 40 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 44 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 48 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 4C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 50 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 54 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 58 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 5C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 60 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 64 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 68 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 6C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 70 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 74 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 78 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 7C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 80 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 84 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 88 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 8C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 90 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 94 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 98 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 9C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* A0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* A4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* A8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* AC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* B0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* B4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* B8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* BC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* C0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* C4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* C8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* CC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* D0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* D4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* D8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* DC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* E0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* E4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* E8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* EC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* F0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* F4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* F8 */
+    {&nulldev, "nulldev"}, {&hdsk_io, "hdsk_io"}, {&simh_dev,"simh_dev"},{&sr_dev, "sr_dev"}            /* FC */
 };
 
-static int32 ramtype = 0;
+const char* handlerNameForPort(const int32 port) {
+    return dev_table[port & 0xff].name;
+}
+
+static int32 ramtype =  0;
 #define MAX_RAM_TYPE    3
 
 ChipType chiptype = CHIP_TYPE_8080;
@@ -621,13 +657,13 @@ ChipType chiptype = CHIP_TYPE_8080;
 void out(const uint32 Port, const uint32 Value) {
     if ((cpu_dev.dctrl & OUT_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-                " OUT(port=0x%04x [%5d], value=0x%04x [%5d])\n", PCX, Port, Port, Value, Value);
+                " OUT(port=0x%04x [%5d] %s, value=0x%04x [%5d])\n", PCX, Port, Port, dev_table[Port & 0xff].name, Value, Value);
         fflush(sim_deb);
     }
     dev_table[Port & 0xff].routine(Port, 1, Value);
     if ((cpu_dev.dctrl & OUT_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-                " OUT(port=0x%04x [%5d], value=0x%04x [%5d]) done\n", PCX, Port, Port, Value, Value);
+                " OUT(port=0x%04x [%5d] %s, value=0x%04x [%5d]) done\n", PCX, Port, Port, dev_table[Port & 0xff].name, Value, Value);
         fflush(sim_deb);
     }
 }
@@ -636,13 +672,13 @@ uint32 in(const uint32 Port) {
     uint32 result;
     if ((cpu_dev.dctrl & IN_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-            " IN(port=0x%04x [%5d])\n", PCX, Port, Port);
+            " IN(port=0x%04x [%5d] %s)\n", PCX, Port, Port, dev_table[Port & 0xff].name);
         fflush(sim_deb);
     }
     result = dev_table[Port & 0xff].routine(Port, 0, 0);
     if ((cpu_dev.dctrl & IN_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-            " IN(port=0x%04x [%5d]) = 0x%04x [%5d]\n", PCX, Port, Port, result, result);
+            " IN(port=0x%04x [%5d] %s) = 0x%04x [%5d]\n", PCX, Port, Port, dev_table[Port & 0xff].name, result, result);
         fflush(sim_deb);
     }
     return result;
@@ -1736,16 +1772,17 @@ typedef struct { /* Structure to describe a 2^LOG2PAGESIZE byte page of address 
     uint32 isRAM;
     uint32 isEmpty;
     int32 (*routine)(const int32, const int32, const int32);
+    const char *name; /* name of handler routine */
 } MDEV;
 
-static MDEV ROM_PAGE    =   {FALSE, FALSE,  NULL};  /* this makes a page ROM        */
-static MDEV RAM_PAGE    =   {TRUE,  FALSE,  NULL};  /* this makes a page RAM        */
-static MDEV EMPTY_PAGE  =   {FALSE, TRUE,   NULL};  /* this is non-existing memory  */
+static MDEV ROM_PAGE    =   {FALSE, FALSE,  NULL, "ROM"};       /* this makes a page ROM        */
+static MDEV RAM_PAGE    =   {TRUE,  FALSE,  NULL, "RAM"};       /* this makes a page RAM        */
+static MDEV EMPTY_PAGE  =   {FALSE, TRUE,   NULL, "NONEXIST"};  /* this is non-existing memory  */
 static MDEV mmu_table[MAXMEMORY >> LOG2PAGESIZE];
 
 /* Memory and I/O Resource Mapping and Unmapping routine. */
 uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap) {
+                        int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap) {
     uint32 page, i, addr;
     if (resource_type == RESOURCE_TYPE_MEMORY) {
         for (i = 0; i < (size >> LOG2PAGESIZE); i++) {
@@ -1754,8 +1791,8 @@ uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
                 addr |= bankSelect << MAXBANKSIZELOG2;
             page = addr >> LOG2PAGESIZE;
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-                sim_printf("%s memory 0x%05x, handler=%p\n", unmap ? "Unmapping" : "  Mapping",
-                    addr, routine);
+                sim_printf("%s memory 0x%05x, handler=%s\n", unmap ? "Unmapping" : "  Mapping",
+                    addr, name);
             if (unmap) {
                 if (mmu_table[page].routine == routine) {   /* unmap only if it was mapped */
                     if (MEMORYSIZE < MAXBANKSIZE)
@@ -1766,10 +1803,10 @@ uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
                     else
                         mmu_table[page] = RAM_PAGE;
                 }
-            }
-            else {
+            } else {
                 mmu_table[page] = ROM_PAGE;
                 mmu_table[page].routine = routine;
+                mmu_table[page].name = name;
             }
         }
     } else if (resource_type == RESOURCE_TYPE_IO) {
@@ -1777,14 +1814,15 @@ uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
             if (unmap) {
                 if (dev_table[i & 0xff].routine == routine) {
                     if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-                        sim_printf("Unmapping  IO %04x, handler=%p\n", i, routine);
+                        sim_printf("Unmapping  IO %04x, handler=%s\n", i, dev_table[i & 0xff].name);
                     dev_table[i & 0xff].routine = &nulldev;
+                    dev_table[i & 0xff].name = "nulldev";
                 }
-            }
-            else {
+            } else {
                 if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-                    sim_printf("  Mapping  IO %04x, handler=%p\n", i, routine);
+                    sim_printf("  Mapping  IO %04x, handler=%s\n", i, name);
                 dev_table[i & 0xff].routine = routine;
+                dev_table[i & 0xff].name = name;
             }
     } else {
         sim_printf("%s: cannot map unknown resource type %d\n", __FUNCTION__, resource_type);
@@ -1807,9 +1845,9 @@ static void PutBYTE(register uint32 Addr, const register uint32 Value) {
         m.routine(Addr, 1, Value);
     else if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
         if (m.isEmpty)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         else
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT ".\n", PCX, Addr);
     }
 }
 
@@ -1825,9 +1863,9 @@ void PutBYTEExtended(register uint32 Addr, const register uint32 Value) {
         m.routine(Addr, 1, Value);
     else if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
         if (m.isEmpty)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         else
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT ".\n", PCX, Addr);
     }
 }
 
@@ -1850,7 +1888,7 @@ static uint32 GetBYTE(register uint32 Addr) {
         return m.routine(Addr, 0, 0); /* memory mapped I/O */
     if (m.isEmpty) {
         if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         return 0xff;
     }
     return M[Addr]; /* ROM */
@@ -1868,7 +1906,7 @@ uint32 GetBYTEExtended(register uint32 Addr) {
         return m.routine(Addr, 0, 0);
     if (m.isEmpty) {
         if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         return 0xff;
     }
     return M[Addr];
@@ -2024,29 +2062,13 @@ void setClockFrequency(const uint32 Value) {
 }
 
 
-#if !UNIX_PLATFORM
-
-/* Poll for CPU stop when user presses sim_int_char. Must be followed by sim_process_event */
-
-#define INITIAL_POLL_COUNTER    1000
-
-void pollForCPUStop(void) {
-    static uint32 pollCounter = INITIAL_POLL_COUNTER;
-    if (--pollCounter == 0) {
-        pollCounter = INITIAL_POLL_COUNTER;
-        sim_poll_kbd(); /* the following sim_process_event will check for stop */
-    }
-}
-
-#endif
-
-
 static t_stat sim_instr_mmu (void) {
     extern int32 timerInterrupt;
     extern int32 timerInterruptHandler;
     extern int32 keyboardInterrupt;
     extern uint32 keyboardInterruptHandler;
     int32 reason = SCPE_OK;
+    uint32 i;
     register uint32 specialProcessing;
     register uint32 AF;
     register uint32 BC;
@@ -2084,17 +2106,12 @@ static t_stat sim_instr_mmu (void) {
     if (rtc_avail) {
         startTime = sim_os_msec();
         tStatesInSlice = sliceLength * clockFrequency;
-    }
-    else /* make sure that sim_os_msec() is not called later */
+    } else /* make sure that sim_os_msec() is not called later */
         clockFrequency = startTime = tStatesInSlice = 0;
 
     /* main instruction fetch/decode loop */
     while (switch_cpu_now == TRUE) {        /* loop until halted    */
         if (sim_interval <= 0) {            /* check clock queue    */
-#if !UNIX_PLATFORM
-            /* poll on platforms without reliable signalling but not too often */
-            pollForCPUStop(); /* following sim_process_event will check for stop */
-#endif
             if ((reason = sim_process_event()))
                 break;
             if (clockHasChanged) {
@@ -2103,8 +2120,7 @@ static t_stat sim_instr_mmu (void) {
                 if (rtc_avail) {
                     startTime = sim_os_msec();
                     tStatesInSlice = sliceLength * clockFrequency;
-                }
-                else /* make sure that sim_os_msec() is not called later */
+                } else /* make sure that sim_os_msec() is not called later */
                     clockFrequency = startTime = tStatesInSlice = 0;
             }
             specialProcessing = clockFrequency | timerInterrupt | keyboardInterrupt | sim_brk_summ;
@@ -2127,8 +2143,7 @@ static t_stat sim_instr_mmu (void) {
                 if ((GetBYTE(PC) == HALTINSTRUCTION) && ((cpu_unit.flags & UNIT_CPU_STOPONHALT) == 0)) {
                     PUSH(PC + 1);
                     PCQ_ENTRY(PC);
-                }
-                else {
+                } else {
                     PUSH(PC);
                     PCQ_ENTRY(PC - 1);
                 }
@@ -2143,8 +2158,7 @@ static t_stat sim_instr_mmu (void) {
                 if ((GetBYTE(PC) == HALTINSTRUCTION) && ((cpu_unit.flags & UNIT_CPU_STOPONHALT) == 0)) {
                     PUSH(PC + 1);
                     PCQ_ENTRY(PC);
-                }
-                else {
+                } else {
                     PUSH(PC);
                     PCQ_ENTRY(PC - 1);
                 }
@@ -2275,8 +2289,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 13;
-                }
-                else {
+                } else {
                     PC++;
                     tStates += 8;
                 }
@@ -2382,8 +2395,7 @@ static t_stat sim_instr_mmu (void) {
                 if (TSTFLAG(Z)) {
                     PC++;
                     tStates += 7;
-                }
-                else {
+                }  else {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
@@ -2444,8 +2456,7 @@ static t_stat sim_instr_mmu (void) {
                     }
                     if (hd)
                         acu -= 0x160;   /* adjust high digit */
-                }
-                else {          /* last operation was an add */
+                } else {          /* last operation was an add */
                     if (TSTFLAG(H) || (temp > 9)) { /* adjust low digit */
                         SETFLAG(H, (temp > 9));
                         acu += 6;
@@ -2464,8 +2475,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
-                }
-                else {
+                } else {
                     PC++;
                     tStates += 7;
                 }
@@ -2523,8 +2533,7 @@ static t_stat sim_instr_mmu (void) {
                 if (TSTFLAG(C)) {
                     PC++;
                     tStates += 7;
-                }
-                else {
+                } else {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
@@ -2585,8 +2594,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
-                }
-                else {
+                } else {
                     PC++;
                     tStates += 7;
                 }
@@ -3459,8 +3467,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xc0:      /* RET NZ */
                 if (TSTFLAG(Z)) {
                     tStates += 5; /* RNZ 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -3515,8 +3522,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RZ 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RZ 5 */
                 }
                 break;
@@ -3537,8 +3543,7 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         JPC(1);
                         break;
                     }
@@ -3739,8 +3744,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xd0:      /* RET NC */
                 if (TSTFLAG(C)) {
                     tStates += 5; /* RNC 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -3796,8 +3800,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RC 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RC 5 */
                 }
                 break;
@@ -3846,8 +3849,7 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         CALLC(1);   /* also updates tStates */
                         break;
                     }
@@ -4586,8 +4588,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xe0:      /* RET PO */
                 if (TSTFLAG(P)) {
                     tStates += 5; /* RPO 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -4642,8 +4643,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RPE 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RPE 5 */
                 }
                 break;
@@ -4674,8 +4674,7 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         CALLC(1);   /* also updates tStates */
                         break;
                     }
@@ -5307,8 +5306,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xf0:      /* RET P */
                 if (TSTFLAG(S)) {
                     tStates += 5; /* RP 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -5360,8 +5358,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RM 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RM 5 */
                 }
                 break;
@@ -5389,8 +5386,7 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         CALLC(1);   /* also updates tStates */
                         break;
                     }
@@ -6128,8 +6124,35 @@ static t_stat sim_instr_mmu (void) {
             PC = 0x38;
         }
 
-        sim_interval--;
+        /*
+        ** Save in instruction history ring buffer
+        */
+        if (hst_lnt && ((chiptype == CHIP_TYPE_8080) || (chiptype == CHIP_TYPE_Z80))) {
+            hst[hst_p].valid = 1;
+            hst[hst_p].pc = PCX;
+            hst[hst_p].sp = SP;
+            hst[hst_p].af = AF;
+            hst[hst_p].bc = BC;
+            hst[hst_p].de = DE;
+            hst[hst_p].hl = HL;
+            hst[hst_p].af1 = AF1_S;
+            hst[hst_p].bc1 = BC1_S;
+            hst[hst_p].de1 = DE1_S;
+            hst[hst_p].hl1 = HL1_S;
+            hst[hst_p].ix = IX;
+            hst[hst_p].iy = IY;
 
+            for (i = 0; i < INST_MAX_BYTES; i++) {
+                hst[hst_p].op[i] = GetBYTE(PCX + i);
+            }
+
+            if (++hst_p == hst_lnt) {
+                hst_p = 0;
+            }
+        }
+
+        PC &= ADDRMASK; /* reestablish invariant */
+        sim_interval--;
     }
 
     /* It we stopped processing instructions because of a switch to the other
@@ -6315,7 +6338,7 @@ typedef struct {
 const static CPUFLAG cpuflags8080[] = {
     {1 << 7,    "S"},
     {1 << 6,    "Z"},
-    {1 << 4,    "A"},
+    {1 << 4,    "H"},
     {1 << 3,    "P"},
     {1 << 1,    "N"},
     {1 << 0,    "C"},
@@ -6325,7 +6348,7 @@ const static CPUFLAG cpuflags8080[] = {
 const static CPUFLAG cpuflagsZ80[] = {
     {1 << 7,    "S"},
     {1 << 6,    "Z"},
-    {1 << 4,    "A"},
+    {1 << 4,    "H"},
     {1 << 3,    "V"},
     {1 << 1,    "N"},
     {1 << 0,    "C"},
@@ -6486,8 +6509,7 @@ static t_stat cpu_set_banked(UNIT *uptr, int32 value, CONST char *cptr, void *de
         MEMORYSIZE = MAXMEMORY;
         cpu_dev.awidth = MAXBANKSIZELOG2 + MAXBANKSLOG2;
         cpu_clear();
-    }
-    else if (chiptype == CHIP_TYPE_8086) {
+    } else if (chiptype == CHIP_TYPE_8086) {
         sim_printf("Cannot use banked memory for 8086 CPU.\n");
         return SCPE_ARG;
     }
@@ -6508,13 +6530,13 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
         switch(ramtype) {
             case 1:
                 if (data & 0x40) {
-                    sim_printf("HRAM: Parity %s" NLP, data & 1 ? "ON" : "OFF");
+                    sim_printf("HRAM: Parity %s\n", data & 1 ? "ON" : "OFF");
                 } else {
-                    sim_printf("HRAM BANKSEL=%02x" NLP, data);
+                    sim_printf("HRAM BANKSEL=%02x\n", data);
                 }
                 break;
             case 2:
-/*              sim_printf("VRAM BANKSEL=%02x" NLP, data);*/
+/*              sim_printf("VRAM BANKSEL=%02x\n", data);*/
                 switch(data & 0xFF) {
                     case 0x01:
 /*                  case 0x41:      // OASIS uses this for some reason? */
@@ -6543,12 +6565,12 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
                         setBankSelect(7);
                         break;
                     default:
-/*                      sim_printf("Invalid bank select 0x%02x for VRAM" NLP, data);*/
+/*                      sim_printf("Invalid bank select 0x%02x for VRAM\n", data);*/
                         break;
                 }
                 break;
             case 3:
-/*                sim_printf(ADDRESS_FORMAT " CRAM BANKSEL=%02x" NLP, PCX, data); */
+/*                sim_printf(ADDRESS_FORMAT " CRAM BANKSEL=%02x\n", PCX, data); */
                 switch(data & 0x7F) {
                     case 0x01:
                         setBankSelect(0);
@@ -6575,7 +6597,7 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
 /*                        setBankSelect(7); */
 /*                        break; */
                     default:
-                        sim_printf("Invalid bank select 0x%02x for CRAM" NLP, data);
+                        sim_printf("Invalid bank select 0x%02x for CRAM\n", data);
                         break;
                 }
 
@@ -6641,14 +6663,14 @@ static int32 switchcpu_io(const int32 port, const int32 io, CONST int32 data) {
             case CHIP_TYPE_8080:
             case CHIP_TYPE_Z80:
                 if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
-                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8086" NLP, PCX, port);
+                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8086\n", PCX, port);
                 }
                 new_chiptype = CHIP_TYPE_8086;
                 switch_cpu_now = FALSE; /* hharte */
                 break;
             case CHIP_TYPE_8086:
                 if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
-                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8085/Z80" NLP, PCX, port);
+                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8085/Z80\n", PCX, port);
                 }
                 new_chiptype = CHIP_TYPE_Z80;
                 switch_cpu_now = FALSE; /* hharte */
@@ -6678,7 +6700,7 @@ static t_stat cpu_set_switcher(UNIT *uptr, int32 value, CONST char *cptr, void *
     struct idev safe;
     switcherPort &= 0xff;
     safe = dev_table[switcherPort];
-    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, &switchcpu_io, FALSE)) {
+    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, &switchcpu_io, "switchcpu_io", FALSE)) {
         sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, switcherPort);
         return SCPE_ARG;
     }
@@ -6687,7 +6709,7 @@ static t_stat cpu_set_switcher(UNIT *uptr, int32 value, CONST char *cptr, void *
 }
 
 static t_stat cpu_reset_switcher(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
-    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, oldSwitcherDevice.routine, FALSE)) {
+    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, oldSwitcherDevice.routine, oldSwitcherDevice.name, FALSE)) {
         sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, switcherPort);
         return SCPE_ARG;
     }
@@ -6706,17 +6728,17 @@ static t_stat cpu_set_ramtype(UNIT *uptr, int32 value, CONST char *cptr, void *d
         case 1:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping NorthStar HRAM\n");
-            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, TRUE);
+            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
         case 2:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping Vector RAM\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, TRUE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
         case 3:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping Cromemco RAM\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, TRUE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
         case 0:
         default:
@@ -6729,17 +6751,17 @@ static t_stat cpu_set_ramtype(UNIT *uptr, int32 value, CONST char *cptr, void *d
         case 1:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("NorthStar HRAM Selected\n");
-            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, FALSE);
+            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
         case 2:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Vector RAM Selected\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, FALSE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
         case 3:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Cromemco RAM Selected\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, FALSE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
         case 0:
         default:
@@ -6792,6 +6814,142 @@ static t_stat cpu_set_memory(UNIT *uptr, int32 value, CONST char *cptr, void *de
             ((cptr[i + 1] == 'B') && (cptr[i + 2] == 0))))
         return set_size(size);
     return SCPE_ARG;
+}
+
+static t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc) {
+   uint32 i, lnt;
+   t_stat r;
+
+    if ((chiptype != CHIP_TYPE_8080) && (chiptype != CHIP_TYPE_Z80)) {
+        sim_printf("History not supported for chiptype: %s\n",
+               (chiptype < NUM_CHIP_TYPE) ? cpu_mod[chiptype].mstring : "????");
+        return SCPE_NOFNC;
+    }
+
+    /*
+    ** If cptr is NULL, reset ring buffer ("SET HISTORY")
+    */
+    if (cptr == NULL) {
+        if (hst == NULL) {
+            sim_printf("History buffer not enabled.\n");
+            return SCPE_NOFNC;
+        }
+
+        for (i = 0; i < hst_lnt; i++) {
+            hst[i].valid = 0;
+        }
+
+        hst_p = 0;
+
+        return SCPE_OK;
+    }
+
+    /*
+    ** Enable/Resize ring buffer ("SET HISTORY=<n>")
+    */
+    lnt = (uint32) get_uint (cptr, 10, HIST_MAX, &r);
+
+    if ((r != SCPE_OK) || (lnt && (lnt < HIST_MIN))) {
+        sim_printf("History buffer minimum/maximum size: %d/%d\n", HIST_MIN, HIST_MAX);
+        return SCPE_ARG;
+    }
+
+    /*
+    ** Delete old history buffer
+    */
+    if (hst!=NULL) {
+        free (hst);
+        hst_lnt = 0;
+        hst = NULL;
+    }
+
+    hst_p = 0;
+
+    /*
+    ** If a length was specified, allocate new buffer ("SET HISTORY=<n>" where n>0)
+    */
+    if (lnt) {
+        hst = (insthist_t *) calloc (lnt, sizeof (insthist_t));
+        if (hst == NULL) {
+            return SCPE_MEM;
+        }
+        hst_lnt = lnt;
+    }
+
+    return SCPE_OK;
+}
+
+t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+    int32 k, di, lnt;
+    CONST char *cptr = (CONST char *) desc;
+    t_stat r;
+    insthist_t *h;
+
+    if ((chiptype != CHIP_TYPE_8080) && (chiptype != CHIP_TYPE_Z80)) {
+        sim_printf("History not supported for chiptype: %s\n",
+               (chiptype < NUM_CHIP_TYPE) ? cpu_mod[chiptype].mstring : "????");
+        return SCPE_NOFNC;
+    }
+
+    if (hst_lnt == 0) {
+        return SCPE_NOFNC;                    /* enabled? */
+    }
+
+    if (cptr) {
+        lnt = (int32) get_uint (cptr, 10, hst_lnt, &r);
+
+        if ((r != SCPE_OK) || (lnt == 0)) {
+            return SCPE_ARG;
+        }
+    } else {
+        lnt = hst_lnt;
+    }
+
+    di = hst_p - lnt;
+
+    if (di < 0) di = di + hst_lnt;
+
+    for (k = 0; k < lnt; k++) {
+        h = &hst[(di++) % hst_lnt];
+
+        if (h->valid) {                              /* valid entry? */
+            if (chiptype == CHIP_TYPE_8080) {
+                /*
+                ** Use DDT output:
+                ** CfZfMfEfIf A=bb B=dddd D=dddd H=dddd S=dddd P=dddd inst
+                */
+                fprintf(st, "CPU: C%dZ%dM%dE%dI%d A=%02X B=%04X D=%04X H=%04X S=%04X P=%04X ",
+                    TSTFLAG2(h->af, C),
+                    TSTFLAG2(h->af, Z),
+                    TSTFLAG2(h->af, S),
+                    TSTFLAG2(h->af, P),
+                    TSTFLAG2(h->af, H),
+                    HIGH_REGISTER(h->af), h->bc, h->de, h->hl, h->sp, h->pc);
+                fprint_sym (st, h->pc, h->op, &cpu_unit, SWMASK ('M'));
+                fprintf(st, "\n");
+            } else {    /* Z80 */
+                /*
+                ** Use DDT/Z output:
+                */
+                fprintf(st, "CPU: C%dZ%dS%dV%dH%dN%d A =%02X BC =%04X DE =%04X HL =%04X S =%04X P =%04X ",
+                    TSTFLAG2(h->af, C),
+                    TSTFLAG2(h->af, Z),
+                    TSTFLAG2(h->af, S),
+                    TSTFLAG2(h->af, P),
+                    TSTFLAG2(h->af, H),
+                    TSTFLAG2(h->af, N),
+                    HIGH_REGISTER(h->af), h->bc, h->de, h->hl, h->sp, h->pc);
+                fprint_sym (st, h->pc, h->op, &cpu_unit, SWMASK ('M'));
+                fprintf(st, "\n");
+                fprintf(st, "                  A'=%02X BC'=%04X DE'=%04X HL'=%04X IX=%04X IY=%04X ",
+                    HIGH_REGISTER(h->af1), h->bc1, h->de1, h->hl1, h->ix, h->iy);
+                fprintf(st, "\n");
+            }
+        }
+    }
+
+    return SCPE_OK;
 }
 
 t_value altairz80_pc_value (void) {
@@ -6867,8 +7025,7 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
                 return SCPE_IOERR;
         }
         sim_printf("%d byte%s dumped [%x - %x] to %s.\n", PLURAL(hi + 1 - lo), lo, hi, fnam);
-    }
-    else {
+    } else {
         if (*cptr == 0)
             addr = (chiptype == CHIP_TYPE_8086) ? PCX_S : PC_S;
         else {
@@ -6876,8 +7033,7 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
             if (strcmp(gbuf, "ROM") == 0) {
                 addr = (chiptype == CHIP_TYPE_8086) ? PCX_S : PC_S;
                 makeROM = TRUE;
-            }
-            else {
+            } else {
                 addr = strtotv(cptr, &result, 16) & ADDRMASKEXTENDED;
                 if (cptr == result)
                     return SCPE_ARG;

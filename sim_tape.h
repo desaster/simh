@@ -91,7 +91,6 @@ typedef struct {
 /* Unit flags */
 
 #define MTUF_V_WLK      (UNIT_V_UF + 0)                 /* write locked */
-#define MTUF_V_FMT      (UNIT_V_UF + 2)                 /* tape file format */
 #define MTUF_F_STD      0                               /* SIMH format */
 #define MTUF_F_E11      1                               /* E11 format */
 #define MTUF_F_TPC      2                               /* TPC format */
@@ -100,6 +99,7 @@ typedef struct {
 #define MTUF_F_TAR      5                               /* TAR format */
 #define MTUF_F_ANSI     6                               /* ANSI format */
 #define MTUF_F_FIXED    7                               /* FIXED format */
+#define MTUF_F_DOS11    8                               /* DOS11 format */
 
 #define MTAT_F_VMS      0                               /* VMS ANSI type */
 #define MTAT_F_RSX11    1                               /* RSX-11 ANSI type */

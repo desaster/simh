@@ -86,7 +86,7 @@ extern t_stat show_membase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 
 static t_stat adcs6_svc (UNIT *uptr);
 
@@ -399,18 +399,18 @@ static t_stat adcs6_reset(DEVICE *dptr)
 
     if(dptr->flags & DEV_DIS) { /* Disconnect ROM and I/O Ports */
         if (adcs6_hasProperty(UNIT_ADCS6_ROM)) {
-            sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &adcs6rom, TRUE);
+            sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &adcs6rom, "adcs6rom", TRUE);
         }
         /* Unmap I/O Ports (0x3-4,0x5-9,0x34,0x40 */
-        sim_map_resource(0x10, 4, RESOURCE_TYPE_IO, &adcs6_dma, TRUE);
-        sim_map_resource(0x04, 8, RESOURCE_TYPE_IO, &adcs6_timer, TRUE);
-        sim_map_resource(0x14, 1, RESOURCE_TYPE_IO, &adcs6_control, TRUE);
-        sim_map_resource(0x15, 7, RESOURCE_TYPE_IO, &adcs6_banksel, TRUE);
+        sim_map_resource(0x10, 4, RESOURCE_TYPE_IO, &adcs6_dma, "adcs6_dma", TRUE);
+        sim_map_resource(0x04, 8, RESOURCE_TYPE_IO, &adcs6_timer, "adcs6_timer", TRUE);
+        sim_map_resource(0x14, 1, RESOURCE_TYPE_IO, &adcs6_control, "adcs6_control", TRUE);
+        sim_map_resource(0x15, 7, RESOURCE_TYPE_IO, &adcs6_banksel, "adcs6_banksel", TRUE);
     } else {
         /* Connect ADCS6 ROM at base address */
         if (adcs6_hasProperty(UNIT_ADCS6_ROM)) {
             sim_debug(VERBOSE_MSG, &adcs6_dev, "ADCS6: ROM Enabled.\n");
-            if(sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &adcs6rom, FALSE) != 0) {
+            if(sim_map_resource(pnp->mem_base, pnp->mem_size, RESOURCE_TYPE_MEMORY, &adcs6rom, "adcs6rom", FALSE) != 0) {
                 sim_printf("%s: error mapping MEM resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
                 return SCPE_ARG;
             }
@@ -421,7 +421,7 @@ static t_stat adcs6_reset(DEVICE *dptr)
         }
 
         /* Connect ADCS6 FDC Synchronization / Drive / Density Register */
-        if(sim_map_resource(0x14, 0x01, RESOURCE_TYPE_IO, &adcs6_control, FALSE) != 0) {
+        if(sim_map_resource(0x14, 0x01, RESOURCE_TYPE_IO, &adcs6_control, "adcs6_control", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
@@ -429,19 +429,19 @@ static t_stat adcs6_reset(DEVICE *dptr)
 #ifdef ADCS6
         /* Connect ADCS6 Interrupt, and Aux Disk Registers */
 
-        if(sim_map_resource(0x10, 0x04, RESOURCE_TYPE_IO, &adcs6_dma, FALSE) != 0) {
+        if(sim_map_resource(0x10, 0x04, RESOURCE_TYPE_IO, &adcs6_dma, "adcs6_dma", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
 
         /* Connect ADCS6 Timer Registers */
-        if(sim_map_resource(0x04, 0x08, RESOURCE_TYPE_IO, &adcs6_timer, FALSE) != 0) {
+        if(sim_map_resource(0x04, 0x08, RESOURCE_TYPE_IO, &adcs6_timer, "adcs6_timer", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
 #endif
         /* Connect ADCS6 Memory Management / Bank Select Register */
-        if(sim_map_resource(0x15, 0x7, RESOURCE_TYPE_IO, &adcs6_banksel, FALSE) != 0) {
+        if(sim_map_resource(0x15, 0x7, RESOURCE_TYPE_IO, &adcs6_banksel, "adcs6_banksel", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
@@ -453,7 +453,7 @@ static t_stat adcs6_reset(DEVICE *dptr)
 
 static t_stat adcs6_boot(int32 unitno, DEVICE *dptr)
 {
-    DBG_PRINT(("Booting ADCS6 Controller" NLP));
+    DBG_PRINT(("Booting ADCS6 Controller\n"));
 
     /* Re-enable the ROM in case it was disabled */
     adcs6_info->rom_disabled = FALSE;
@@ -484,7 +484,7 @@ static t_stat adcs6_detach(UNIT *uptr)
 
 static int32 adcs6rom(const int32 Addr, const int32 write, const int32 data)
 {
-/*  DBG_PRINT(("ADCS6: ROM %s, Addr %04x" NLP, write ? "WR" : "RD", Addr)); */
+/*  DBG_PRINT(("ADCS6: ROM %s, Addr %04x\n", write ? "WR" : "RD", Addr)); */
     if(write) {
         if(adcs6_info->rom_disabled == FALSE) {
             sim_debug(ERROR_MSG, &adcs6_dev, "ADCS6: " ADDRESS_FORMAT
