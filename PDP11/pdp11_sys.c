@@ -124,6 +124,8 @@ extern DEVICE daz_dev;
 #endif
 extern REG cpu_reg[];
 extern int32 saved_PC;
+extern DEVICE icr_dev;
+extern DEVICE icp_dev;
 
 /* SCP data structures and interface routines
 
@@ -215,6 +217,8 @@ DEVICE *sim_devices[] = {
     &uca_dev,
     &ucb_dev,
 #endif
+    &icr_dev,
+    &icp_dev,
     NULL
     };
 

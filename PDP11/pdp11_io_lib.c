@@ -797,6 +797,10 @@ AUTO_CON auto_tab[] = {/*c  #v  am vm  fxa   fxv */
     { { NULL },          1,  2,  4, 8 },                /* DTC05, DECvoice */
     { { NULL },          1,  2,  8, 8 },                /* KWV32 (DSV11) */
     { { NULL },          1,  1, 64, 4 },                /* QZA */
+    { { "ICR" },         1,  0,  0, 0, 
+        {016100}, {0070} },                             /* I2C reader - fx CSR, fx VEC */
+    { { "ICP" },         1,  0,  0, 0, 
+        {016104}, {0074} },                             /* I2C punch - fx CSR, fx VEC */
     { { "CH" },          1,  1,  0, 0, 
         {04140}, {0270} },                              /* CH11 - CHAOS Net - fx CSR, fx VEC */
     { { "NG" },          1,  1,  0, 0, 
